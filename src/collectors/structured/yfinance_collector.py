@@ -1,8 +1,9 @@
 """Yahoo Finance collector for US stocks."""
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import date, timedelta
 import logging
 
+import pandas as pd
 import yfinance as yf
 
 from src.collectors.base import BaseCollector, QuoteData
@@ -29,6 +30,11 @@ class YFinanceCollector(BaseCollector):
 
         Returns:
             List of QuoteData objects
+
+        Raises:
+            Exception: Propagates any API errors to caller for batch operations.
+                This allows callers to handle errors appropriately when fetching
+                quotes for multiple symbols.
         """
         try:
             ticker = yf.Ticker(symbol)
@@ -43,11 +49,11 @@ class YFinanceCollector(BaseCollector):
                 quote = QuoteData(
                     symbol=symbol.upper(),
                     trade_date=idx.date(),
-                    open=round(row["Open"], 4) if row["Open"] else None,
-                    high=round(row["High"], 4) if row["High"] else None,
-                    low=round(row["Low"], 4) if row["Low"] else None,
-                    close=round(row["Close"], 4) if row["Close"] else None,
-                    volume=int(row["Volume"]) if row["Volume"] else None,
+                    open=round(row["Open"], 4) if pd.notna(row["Open"]) else None,
+                    high=round(row["High"], 4) if pd.notna(row["High"]) else None,
+                    low=round(row["Low"], 4) if pd.notna(row["Low"]) else None,
+                    close=round(row["Close"], 4) if pd.notna(row["Close"]) else None,
+                    volume=int(row["Volume"]) if pd.notna(row["Volume"]) else None,
                 )
                 quotes.append(quote)
 
@@ -66,6 +72,11 @@ class YFinanceCollector(BaseCollector):
 
         Returns:
             QuoteData or None if not available
+
+        Note:
+            Unlike fetch_quotes(), this method swallows exceptions and returns
+            None on API errors. This is intentional for single-symbol lookups
+            where graceful degradation is preferred over error propagation.
         """
         try:
             ticker = yf.Ticker(symbol)
@@ -78,11 +89,11 @@ class YFinanceCollector(BaseCollector):
             return QuoteData(
                 symbol=symbol.upper(),
                 trade_date=df.index[-1].date(),
-                open=round(row["Open"], 4) if row["Open"] else None,
-                high=round(row["High"], 4) if row["High"] else None,
-                low=round(row["Low"], 4) if row["Low"] else None,
-                close=round(row["Close"], 4) if row["Close"] else None,
-                volume=int(row["Volume"]) if row["Volume"] else None,
+                open=round(row["Open"], 4) if pd.notna(row["Open"]) else None,
+                high=round(row["High"], 4) if pd.notna(row["High"]) else None,
+                low=round(row["Low"], 4) if pd.notna(row["Low"]) else None,
+                close=round(row["Close"], 4) if pd.notna(row["Close"]) else None,
+                volume=int(row["Volume"]) if pd.notna(row["Volume"]) else None,
             )
 
         except Exception as e:
@@ -94,7 +105,7 @@ class YFinanceCollector(BaseCollector):
         symbols: List[str],
         start_date: date,
         end_date: date,
-    ) -> dict[str, List[QuoteData]]:
+    ) -> Dict[str, List[QuoteData]]:
         """
         Fetch historical quotes for multiple symbols.
 

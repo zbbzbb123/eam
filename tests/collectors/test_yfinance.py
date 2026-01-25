@@ -93,6 +93,27 @@ class TestYFinanceCollector:
             assert "VOO" in result
             assert len(result["NVDA"]) == 4
 
+    def test_fetch_quotes_raises_on_api_error(self, collector):
+        """Test that fetch_quotes raises exceptions on API errors."""
+        with patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.history.side_effect = Exception("API error")
+
+            with pytest.raises(Exception, match="API error"):
+                collector.fetch_quotes(
+                    symbol="NVDA",
+                    start_date=date(2025, 1, 20),
+                    end_date=date(2025, 1, 24),
+                )
+
+    def test_fetch_latest_quote_returns_none_on_api_error(self, collector):
+        """Test that fetch_latest_quote returns None on API errors."""
+        with patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.history.side_effect = Exception("API error")
+
+            quote = collector.fetch_latest_quote("NVDA")
+
+            assert quote is None
+
 
 # Integration test (skipped by default, run with: pytest -m integration)
 @pytest.mark.integration
