@@ -3,14 +3,15 @@ import pytest
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from src.db.database import Base
 from src.db.models import (
-    Holding, Transaction, DailyQuote,
-    Market, Tier, HoldingStatus, TransactionAction
+    Holding, Transaction, DailyQuote, Signal,
+    Market, Tier, HoldingStatus, TransactionAction,
+    SignalType, SignalSeverity, SignalStatus
 )
 
 
@@ -18,6 +19,25 @@ from src.db.models import (
 def db_session():
     """Create an in-memory SQLite database session for testing."""
     engine = create_engine("sqlite:///:memory:", echo=False)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    yield session
+    session.close()
+
+
+@pytest.fixture
+def db_session_with_fk():
+    """Create an in-memory SQLite database session with foreign key enforcement."""
+    engine = create_engine("sqlite:///:memory:", echo=False)
+
+    # Enable foreign key constraints for SQLite
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -154,3 +174,103 @@ class TestDatabaseIntegration:
 
         # Verify transaction was cascaded
         assert db_session.query(Transaction).count() == 0
+
+    def test_signal_persistence(self, db_session):
+        """Test that a Signal can be persisted and queried."""
+        signal = Signal(
+            signal_type=SignalType.SECTOR,
+            sector="tech",
+            title="AI Capex Surge",
+            description="Mag 7 capex increased 25% QoQ",
+            severity=SignalSeverity.INFO,
+            source="earnings_reports",
+            data={"capex_growth": 0.25, "companies": ["NVDA", "MSFT"]},
+            related_symbols=["NVDA", "MSFT", "GOOGL"],
+        )
+
+        db_session.add(signal)
+        db_session.commit()
+
+        # Query the signal back
+        queried = db_session.query(Signal).filter_by(title="AI Capex Surge").first()
+
+        assert queried is not None
+        assert queried.signal_type == SignalType.SECTOR
+        assert queried.sector == "tech"
+        assert queried.severity == SignalSeverity.INFO
+        assert queried.status == SignalStatus.ACTIVE
+        assert queried.source == "earnings_reports"
+        assert queried.data == {"capex_growth": 0.25, "companies": ["NVDA", "MSFT"]}
+        assert queried.related_symbols == ["NVDA", "MSFT", "GOOGL"]
+        assert queried.telegram_sent is False
+        assert queried.telegram_sent_at is None
+
+    def test_signal_holding_foreign_key(self, db_session):
+        """Test that Signal can reference a Holding via foreign key."""
+        # Create a holding first
+        holding = Holding(
+            symbol="NVDA",
+            market=Market.US,
+            tier=Tier.GAMBLE,
+            quantity=Decimal("10.0"),
+            avg_cost=Decimal("890.00"),
+            first_buy_date=date(2025, 1, 20),
+            buy_reason="AI compute play",
+        )
+        db_session.add(holding)
+        db_session.commit()
+
+        # Create a signal referencing the holding
+        signal = Signal(
+            signal_type=SignalType.HOLDING,
+            title="NVDA earnings beat",
+            description="NVIDIA beat earnings expectations",
+            severity=SignalSeverity.HIGH,
+            source="earnings_monitor",
+            holding_id=holding.id,
+            related_symbols=["NVDA"],
+        )
+        db_session.add(signal)
+        db_session.commit()
+
+        # Query and verify the foreign key relationship
+        queried = db_session.query(Signal).filter_by(holding_id=holding.id).first()
+        assert queried is not None
+        assert queried.holding_id == holding.id
+        assert queried.signal_type == SignalType.HOLDING
+
+    def test_signal_invalid_holding_foreign_key(self, db_session_with_fk):
+        """Test that Signal with invalid holding_id raises IntegrityError.
+
+        Note: Uses db_session_with_fk fixture because SQLite requires explicit
+        PRAGMA foreign_keys=ON to enforce foreign key constraints.
+        """
+        signal = Signal(
+            signal_type=SignalType.HOLDING,
+            title="Invalid holding reference",
+            description="This signal references a non-existent holding",
+            severity=SignalSeverity.MEDIUM,
+            source="test",
+            holding_id=99999,  # Non-existent holding
+        )
+        db_session_with_fk.add(signal)
+
+        with pytest.raises(IntegrityError):
+            db_session_with_fk.commit()
+
+    def test_signal_without_holding(self, db_session):
+        """Test that Signal can be created without a holding reference."""
+        signal = Signal(
+            signal_type=SignalType.MACRO,
+            title="Fed rate decision",
+            description="Federal Reserve keeps rates unchanged",
+            severity=SignalSeverity.HIGH,
+            source="fed_watch",
+        )
+
+        db_session.add(signal)
+        db_session.commit()
+
+        queried = db_session.query(Signal).filter_by(title="Fed rate decision").first()
+        assert queried is not None
+        assert queried.holding_id is None

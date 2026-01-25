@@ -168,7 +168,7 @@ class SignalStatusEnum(str, Enum):
 class SignalCreate(BaseModel):
     """Schema for creating a signal."""
     signal_type: SignalTypeEnum
-    sector: Optional[str] = None
+    sector: Optional[str] = Field(None, max_length=50)
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1)
     severity: SignalSeverityEnum

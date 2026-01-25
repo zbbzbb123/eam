@@ -38,3 +38,16 @@ class TestSignalModel:
         )
 
         assert signal.related_symbols == ["NVDA"]
+
+    def test_signal_default_telegram_sent(self):
+        """Test that telegram_sent defaults to False."""
+        signal = Signal(
+            signal_type=SignalType.MACRO,
+            title="Fed rate decision",
+            description="Federal Reserve announcement",
+            severity=SignalSeverity.HIGH,
+            source="fed_watch",
+        )
+
+        assert signal.telegram_sent is False
+        assert signal.telegram_sent_at is None
