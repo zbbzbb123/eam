@@ -7,7 +7,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-eam}
       MYSQL_CHARSET: utf8mb4
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -21,7 +21,7 @@ services:
     container_name: eam-api
     environment:
       - DATABASE_URL=mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-eam}
-      - DEBUG=${DEBUG:-true}
+      - DEBUG=${DEBUG:-false}
     ports:
       - "8000:8000"
     volumes:
