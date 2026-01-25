@@ -6,7 +6,7 @@ from typing import Optional, List
 
 from sqlalchemy import (
     String, Text, Enum, DECIMAL, Integer, BigInteger,
-    DateTime, Date, Boolean, JSON, ForeignKey
+    DateTime, Date, Boolean, JSON, ForeignKey, UniqueConstraint
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -59,6 +59,10 @@ class Holding(Base):
         Enum(HoldingStatus), default=HoldingStatus.ACTIVE, index=True
     )
 
+    # Custom __init__ is required to ensure the default status is set at Python
+    # instantiation time (before session.add). SQLAlchemy's `default=` only applies
+    # when the object is persisted to the database, but tests verify the default
+    # is available immediately after object creation.
     def __init__(self, **kwargs):
         if 'status' not in kwargs:
             kwargs['status'] = HoldingStatus.ACTIVE
@@ -124,6 +128,6 @@ class DailyQuote(Base):
     volume: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     __table_args__ = (
-        # Unique constraint on symbol + market + trade_date
+        UniqueConstraint('symbol', 'market', 'trade_date', name='uq_daily_quote_symbol_market_date'),
         {"mysql_charset": "utf8mb4"},
     )
