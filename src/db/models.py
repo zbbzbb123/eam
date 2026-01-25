@@ -116,7 +116,7 @@ class DailyQuote(Base):
     """Daily stock quotes table."""
     __tablename__ = "daily_quotes"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
     market: Mapped[Market] = mapped_column(Enum(Market), nullable=False)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
