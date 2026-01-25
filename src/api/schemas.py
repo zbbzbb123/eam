@@ -72,6 +72,8 @@ class HoldingResponse(HoldingBase):
     status: HoldingStatusEnum
     created_at: datetime
     updated_at: datetime
+    # Override quantity to allow 0 for closed positions
+    quantity: Decimal = Field(..., ge=0)
 
     model_config = ConfigDict(from_attributes=True)
 
