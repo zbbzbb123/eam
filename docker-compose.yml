@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   mysql:
     image: mysql:8.0
     container_name: eam-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: eam
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-eam}
       MYSQL_CHARSET: utf8mb4
     ports:
       - "3306:3306"
@@ -22,8 +20,8 @@ services:
     build: .
     container_name: eam-api
     environment:
-      - DATABASE_URL=mysql+pymysql://root:password@mysql:3306/eam
-      - DEBUG=true
+      - DATABASE_URL=mysql+pymysql://root:${MYSQL_ROOT_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-eam}
+      - DEBUG=${DEBUG:-true}
     ports:
       - "8000:8000"
     volumes:

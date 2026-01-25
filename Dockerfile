@@ -16,6 +16,14 @@ COPY src/ ./src/
 # Install Python dependencies
 RUN pip install --no-cache-dir .
 
+# Create non-root user for security
+RUN groupadd --gid 1000 eam \
+    && useradd --uid 1000 --gid eam --shell /bin/bash --create-home eam \
+    && chown -R eam:eam /app
+
+# Switch to non-root user
+USER eam
+
 # Expose port
 EXPOSE 8000
 
