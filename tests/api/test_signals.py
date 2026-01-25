@@ -1,6 +1,5 @@
 """Tests for Signals API."""
 import pytest
-from datetime import datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -21,6 +20,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 
 
 def override_get_db():
+    """Override database dependency for testing with in-memory SQLite."""
     db = TestingSessionLocal()
     try:
         yield db
@@ -153,3 +153,50 @@ class TestSignalsAPI:
         """Test 404 for non-existent signal."""
         response = client.get("/api/signals/999")
         assert response.status_code == 404
+
+    def test_get_signal(self, client):
+        """Test getting a specific signal."""
+        create_response = client.post("/api/signals", json={
+            "signal_type": "sector",
+            "title": "Test Signal",
+            "description": "Description",
+            "severity": "low",
+            "source": "test",
+        })
+        signal_id = create_response.json()["id"]
+
+        response = client.get(f"/api/signals/{signal_id}")
+        assert response.status_code == 200
+        assert response.json()["title"] == "Test Signal"
+
+    def test_delete_signal(self, client):
+        """Test deleting a signal."""
+        create_response = client.post("/api/signals", json={
+            "signal_type": "sector",
+            "title": "Test Signal",
+            "description": "Description",
+            "severity": "low",
+            "source": "test",
+        })
+        signal_id = create_response.json()["id"]
+
+        delete_response = client.delete(f"/api/signals/{signal_id}")
+        assert delete_response.status_code == 204
+
+        get_response = client.get(f"/api/signals/{signal_id}")
+        assert get_response.status_code == 404
+
+    def test_mark_signal_read(self, client):
+        """Test marking a signal as read."""
+        create_response = client.post("/api/signals", json={
+            "signal_type": "sector",
+            "title": "Test Signal",
+            "description": "Description",
+            "severity": "low",
+            "source": "test",
+        })
+        signal_id = create_response.json()["id"]
+
+        response = client.post(f"/api/signals/{signal_id}/mark-read")
+        assert response.status_code == 200
+        assert response.json()["status"] == "read"
