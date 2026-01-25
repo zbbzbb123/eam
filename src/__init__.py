@@ -1,0 +1,1 @@
+"""EAM - Easy Asset Management"""
