@@ -51,7 +51,7 @@ def get_quote_history(
     symbol: str,
     market: MarketEnum = Query(MarketEnum.US),
     start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
-    end_date: date = Query(default_factory=date.today),
+    end_date: date = Query(default_factory=lambda: date.today()),
 ):
     """
     Get historical quotes for a symbol.
@@ -84,7 +84,7 @@ def sync_quotes(
     symbol: str,
     market: MarketEnum = Query(MarketEnum.US),
     start_date: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
-    end_date: date = Query(default_factory=date.today),
+    end_date: date = Query(default_factory=lambda: date.today()),
     db: Session = Depends(get_db),
 ):
     """
@@ -98,18 +98,19 @@ def sync_quotes(
         collector = AkShareCollector()
         quotes = collector.fetch_quotes(symbol, start_date, end_date, market.value)
 
+    # Fetch all existing dates for this symbol/market in one query (avoid N+1)
+    existing_dates_result = db.execute(
+        select(DailyQuote.trade_date).where(
+            DailyQuote.symbol == symbol,
+            DailyQuote.market == Market[market.value],
+        )
+    ).scalars().all()
+    existing_dates = set(existing_dates_result)
+
     count = 0
     for q in quotes:
-        # Check if quote already exists
-        existing = db.execute(
-            select(DailyQuote).where(
-                DailyQuote.symbol == q.symbol,
-                DailyQuote.market == Market[market.value],
-                DailyQuote.trade_date == q.trade_date,
-            )
-        ).scalar_one_or_none()
-
-        if not existing:
+        # Check if quote already exists using the pre-fetched set
+        if q.trade_date not in existing_dates:
             db_quote = DailyQuote(
                 symbol=q.symbol,
                 market=Market[market.value],

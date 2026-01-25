@@ -124,3 +124,53 @@ class TestQuotesAPI:
             data = response.json()
             assert data["synced"] == 1
             assert data["total"] == 1
+
+    def test_sync_quotes_deduplication(self, client, mock_quote):
+        """Test that syncing twice does not create duplicate records."""
+        with patch(
+            "src.api.quotes.YFinanceCollector.fetch_quotes"
+        ) as mock_fn:
+            mock_fn.return_value = [mock_quote]
+
+            # First sync - should insert 1 record
+            response1 = client.post(
+                "/api/quotes/sync/NVDA?market=US&start_date=2025-01-20&end_date=2025-01-24"
+            )
+            assert response1.status_code == 200
+            data1 = response1.json()
+            assert data1["synced"] == 1
+            assert data1["total"] == 1
+
+            # Second sync - should report 0 new records (deduplication)
+            response2 = client.post(
+                "/api/quotes/sync/NVDA?market=US&start_date=2025-01-20&end_date=2025-01-24"
+            )
+            assert response2.status_code == 200
+            data2 = response2.json()
+            assert data2["synced"] == 0
+            assert data2["total"] == 1
+
+    def test_get_latest_quote_cn_market(self, client):
+        """Test getting latest quote for CN market using AkShareCollector."""
+        mock_cn_quote = QuoteData(
+            symbol="600519",
+            trade_date=date(2025, 1, 24),
+            open=1800.0,
+            high=1850.0,
+            low=1790.0,
+            close=1820.0,
+            volume=10000000,
+        )
+        with patch(
+            "src.api.quotes.AkShareCollector.fetch_latest_quote"
+        ) as mock_fn:
+            mock_fn.return_value = mock_cn_quote
+
+            response = client.get("/api/quotes/latest/600519?market=CN")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["symbol"] == "600519"
+            assert data["market"] == "CN"
+            assert float(data["close"]) == 1820.0
+            mock_fn.assert_called_once_with("600519", "CN")
