@@ -136,3 +136,70 @@ class PortfolioOverview(BaseModel):
     total_value: Decimal
     allocations: List[TierAllocation]
     holdings_count: int
+
+
+# ===== Signal Schemas =====
+
+class SignalTypeEnum(str, Enum):
+    """Signal type enum."""
+    SECTOR = "sector"
+    PRICE = "price"
+    MACRO = "macro"
+    SMART_MONEY = "smart_money"
+    HOLDING = "holding"
+
+
+class SignalSeverityEnum(str, Enum):
+    """Signal severity enum."""
+    INFO = "info"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class SignalStatusEnum(str, Enum):
+    """Signal status enum."""
+    ACTIVE = "active"
+    READ = "read"
+    ARCHIVED = "archived"
+
+
+class SignalCreate(BaseModel):
+    """Schema for creating a signal."""
+    signal_type: SignalTypeEnum
+    sector: Optional[str] = None
+    title: str = Field(..., min_length=1, max_length=200)
+    description: str = Field(..., min_length=1)
+    severity: SignalSeverityEnum
+    source: str = Field(..., min_length=1, max_length=100)
+    data: Optional[dict] = None
+    related_symbols: Optional[List[str]] = None
+    holding_id: Optional[int] = None
+    expires_at: Optional[datetime] = None
+
+
+class SignalResponse(BaseModel):
+    """Schema for signal response."""
+    id: int
+    signal_type: SignalTypeEnum
+    sector: Optional[str] = None
+    title: str
+    description: str
+    severity: SignalSeverityEnum
+    status: SignalStatusEnum
+    source: str
+    data: Optional[dict] = None
+    related_symbols: Optional[List[str]] = None
+    holding_id: Optional[int] = None
+    telegram_sent: bool
+    telegram_sent_at: Optional[datetime] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SignalUpdate(BaseModel):
+    """Schema for updating a signal."""
+    status: Optional[SignalStatusEnum] = None

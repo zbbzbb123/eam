@@ -131,3 +131,71 @@ class DailyQuote(Base):
         UniqueConstraint('symbol', 'market', 'trade_date', name='uq_daily_quote_symbol_market_date'),
         {"mysql_charset": "utf8mb4"},
     )
+
+
+class SignalType(PyEnum):
+    """Signal type enum."""
+    SECTOR = "sector"
+    PRICE = "price"
+    MACRO = "macro"
+    SMART_MONEY = "smart_money"
+    HOLDING = "holding"
+
+
+class SignalSeverity(PyEnum):
+    """Signal severity enum."""
+    INFO = "info"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class SignalStatus(PyEnum):
+    """Signal status enum."""
+    ACTIVE = "active"
+    READ = "read"
+    ARCHIVED = "archived"
+
+
+class Signal(Base):
+    """Investment signals table."""
+    __tablename__ = "signals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    signal_type: Mapped[SignalType] = mapped_column(Enum(SignalType), nullable=False, index=True)
+    sector: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    severity: Mapped[SignalSeverity] = mapped_column(Enum(SignalSeverity), nullable=False, index=True)
+    status: Mapped[SignalStatus] = mapped_column(
+        Enum(SignalStatus), default=SignalStatus.ACTIVE, index=True
+    )
+
+    source: Mapped[str] = mapped_column(String(100), nullable=False)
+    data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    related_symbols: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+    holding_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("holdings.id"), nullable=True, index=True
+    )
+
+    telegram_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    telegram_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    def __init__(self, **kwargs):
+        if 'status' not in kwargs:
+            kwargs['status'] = SignalStatus.ACTIVE
+        if 'telegram_sent' not in kwargs:
+            kwargs['telegram_sent'] = False
+        super().__init__(**kwargs)
+
+    __table_args__ = (
+        {"mysql_charset": "utf8mb4"},
+    )
