@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # External APIs (optional for MVP)
     tushare_token: str = ""
 
+    # Telegram
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_enabled: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
