@@ -212,7 +212,6 @@ class TestTransactionsAPI:
         holding_id = create_response.json()["id"]
 
         response = client.post(f"/api/holdings/{holding_id}/transactions", json={
-            "holding_id": holding_id,
             "action": "buy",
             "quantity": "5.0",
             "price": "920.00",
@@ -228,6 +227,8 @@ class TestTransactionsAPI:
         # Verify holding was updated
         holding = client.get(f"/api/holdings/{holding_id}").json()
         assert holding["quantity"] == "15.0000"
+        # Verify avg_cost recalculated: (10 * 890 + 5 * 920) / 15 = 900
+        assert holding["avg_cost"] == "900.0000"
 
     def test_create_sell_transaction_closes_position(self, client):
         """Test that selling all shares closes the position."""
@@ -243,7 +244,6 @@ class TestTransactionsAPI:
         holding_id = create_response.json()["id"]
 
         client.post(f"/api/holdings/{holding_id}/transactions", json={
-            "holding_id": holding_id,
             "action": "sell",
             "quantity": "10.0",
             "price": "950.00",
@@ -269,7 +269,6 @@ class TestTransactionsAPI:
         holding_id = create_response.json()["id"]
 
         client.post(f"/api/holdings/{holding_id}/transactions", json={
-            "holding_id": holding_id,
             "action": "buy",
             "quantity": "5.0",
             "price": "920.00",
@@ -280,3 +279,29 @@ class TestTransactionsAPI:
         response = client.get(f"/api/holdings/{holding_id}/transactions")
         assert response.status_code == 200
         assert len(response.json()) == 1
+
+    def test_sell_more_than_owned_returns_400(self, client):
+        """Test that selling more shares than owned returns 400 error."""
+        create_response = client.post("/api/holdings", json={
+            "symbol": "NVDA",
+            "market": "US",
+            "tier": "gamble",
+            "quantity": "10.0",
+            "avg_cost": "890.00",
+            "first_buy_date": "2025-01-20",
+            "buy_reason": "AI compute play",
+        })
+        holding_id = create_response.json()["id"]
+
+        response = client.post(f"/api/holdings/{holding_id}/transactions", json={
+            "action": "sell",
+            "quantity": "15.0",
+            "price": "950.00",
+            "reason": "Trying to sell too much",
+            "transaction_date": "2025-01-24T10:30:00",
+        })
+
+        assert response.status_code == 400
+        assert "Cannot sell" in response.json()["detail"]
+        assert "15" in response.json()["detail"]
+        assert "10" in response.json()["detail"]

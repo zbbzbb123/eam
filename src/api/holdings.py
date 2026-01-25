@@ -139,6 +139,13 @@ def create_transaction(
             detail=f"Holding {holding_id} not found"
         )
 
+    # Validate sell quantity
+    if transaction.action.value == "sell" and transaction.quantity > holding.quantity:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot sell {transaction.quantity} shares, only {holding.quantity} available"
+        )
+
     total_amount = transaction.quantity * transaction.price
 
     db_transaction = Transaction(

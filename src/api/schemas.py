@@ -91,7 +91,7 @@ class TransactionBase(BaseModel):
 
 class TransactionCreate(TransactionBase):
     """Schema for creating a new transaction."""
-    holding_id: int
+    pass
 
 
 class TransactionResponse(TransactionBase):
