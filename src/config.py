@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     # External APIs (optional for MVP)
     tushare_token: str = ""
+    fred_api_key: str = ""
 
     # Telegram
     telegram_bot_token: str = ""
