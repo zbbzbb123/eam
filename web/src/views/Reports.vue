@@ -1,9 +1,11 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getWeeklyReport } from '../api'
+import { getWeeklyReport, enhanceReport } from '../api'
 
 const report = ref(null)
 const loading = ref(true)
+const enhancedReport = ref(null)
+const enhanceLoading = ref(false)
 
 onMounted(async () => {
   report.value = await getWeeklyReport()
@@ -15,6 +17,12 @@ function renderItems(items) {
   if (Array.isArray(items)) return items
   if (typeof items === 'string') return [items]
   return Object.entries(items).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+}
+
+async function onEnhance() {
+  enhanceLoading.value = true
+  enhancedReport.value = await enhanceReport()
+  enhanceLoading.value = false
 }
 </script>
 
@@ -30,6 +38,12 @@ function renderItems(items) {
     <div v-else-if="!report" class="empty">暂无报告数据。后端服务未运行或尚未生成周报。</div>
 
     <template v-else>
+      <div style="margin-bottom:16px">
+        <button class="ai-btn" :disabled="enhanceLoading" @click="onEnhance">
+          {{ enhanceLoading ? 'AI 增强中...' : 'AI增强报告' }}
+        </button>
+      </div>
+
       <!-- Portfolio Summary -->
       <div class="card report-section">
         <h2>📊 组合概要</h2>
@@ -79,6 +93,29 @@ function renderItems(items) {
         <h2>报告内容</h2>
         <pre style="color:var(--text-muted);white-space:pre-wrap;font-size:13px">{{ JSON.stringify(report, null, 2) }}</pre>
       </div>
+
+      <!-- AI Enhanced Report -->
+      <div v-if="enhanceLoading" class="card report-section">
+        <h2>🤖 AI 增强报告</h2>
+        <div class="ai-loading-text">AI 增强中...</div>
+      </div>
+      <div v-else-if="enhancedReport" class="card report-section ai-enhanced">
+        <h2>🤖 AI 增强报告</h2>
+        <pre class="ai-enhanced-text">{{ typeof enhancedReport === 'string' ? enhancedReport : JSON.stringify(enhancedReport, null, 2) }}</pre>
+      </div>
     </template>
   </div>
 </template>
+
+<style scoped>
+.ai-btn {
+  background: linear-gradient(135deg, #4fc3f7, #0288d1);
+  color: #fff; border: none; border-radius: 6px; padding: 8px 16px;
+  font-size: 13px; cursor: pointer; font-weight: 600;
+}
+.ai-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.ai-btn:hover:not(:disabled) { filter: brightness(1.15); }
+.ai-loading-text { color: #8892a4; padding: 20px 0; font-size: 14px; }
+.ai-enhanced { border-left: 3px solid #4fc3f7; }
+.ai-enhanced-text { color: #e0e6ed; white-space: pre-wrap; font-size: 13px; line-height: 1.7; font-family: inherit; background: none; margin: 0; }
+</style>

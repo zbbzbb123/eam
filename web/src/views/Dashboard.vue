@@ -7,7 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import TierPieChart from '../components/TierPieChart.vue'
 import SignalCard from '../components/SignalCard.vue'
-import { getPortfolioSummary, getSignals, getSchedulerJobs, getHoldingsSummary } from '../api'
+import { getPortfolioSummary, getSignals, getSchedulerJobs, getHoldingsSummary, getPortfolioAdvice } from '../api'
 
 use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
@@ -16,6 +16,8 @@ const signals = ref([])
 const jobs = ref([])
 const holdings = ref([])
 const loading = ref(true)
+const aiAdvice = ref(null)
+const aiAdviceLoading = ref(false)
 
 onMounted(async () => {
   const [s, sig, j, h] = await Promise.all([
@@ -64,6 +66,12 @@ const nextJob = computed(() => {
   if (!jobs.value.length) return '无'
   return jobs.value[0].name || jobs.value[0].id || '已安排'
 })
+
+async function onGetAdvice() {
+  aiAdviceLoading.value = true
+  aiAdvice.value = await getPortfolioAdvice()
+  aiAdviceLoading.value = false
+}
 </script>
 
 <template>
@@ -108,6 +116,21 @@ const nextJob = computed(() => {
         </div>
       </div>
 
+      <!-- AI Portfolio Advice -->
+      <div class="card">
+        <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>AI 投资建议</span>
+          <button class="ai-btn" :disabled="aiAdviceLoading" @click="onGetAdvice">
+            {{ aiAdviceLoading ? 'AI 分析中...' : 'AI投资建议' }}
+          </button>
+        </div>
+        <div v-if="aiAdviceLoading" style="color:#8892a4;padding:20px 0;font-size:14px">AI 分析中...</div>
+        <div v-else-if="aiAdvice" class="ai-advice-content">
+          <pre style="color:#e0e6ed;white-space:pre-wrap;font-size:13px;line-height:1.7;font-family:inherit;background:none;margin:0">{{ typeof aiAdvice === 'string' ? aiAdvice : JSON.stringify(aiAdvice, null, 2) }}</pre>
+        </div>
+        <div v-else class="empty">点击按钮获取 AI 投资建议</div>
+      </div>
+
       <!-- Recent Signals -->
       <div class="card">
         <div class="card-title">最近信号</div>
@@ -117,3 +140,13 @@ const nextJob = computed(() => {
     </template>
   </div>
 </template>
+
+<style scoped>
+.ai-btn {
+  background: linear-gradient(135deg, #4fc3f7, #0288d1);
+  color: #fff; border: none; border-radius: 6px; padding: 6px 14px;
+  font-size: 12px; cursor: pointer; font-weight: 600;
+}
+.ai-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.ai-btn:hover:not(:disabled) { filter: brightness(1.15); }
+</style>

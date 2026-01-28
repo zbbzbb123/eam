@@ -48,3 +48,22 @@ export function getAnalyzers() {
 export function runAnalyzer(id) {
   return api.post(`/analyzers/${id}/run`).then(r => r.data).catch(() => null)
 }
+
+// AI endpoints (longer timeout)
+const aiApi = axios.create({ baseURL: '/api', timeout: 120000 })
+
+export function analyzeHolding(holdingId, quality = true) {
+  return aiApi.post(`/ai/analyze-holding/${holdingId}`, null, { params: { quality } }).then(r => r.data).catch(() => null)
+}
+
+export function analyzeAllHoldings() {
+  return aiApi.post('/ai/analyze-all').then(r => r.data).catch(() => null)
+}
+
+export function getPortfolioAdvice() {
+  return aiApi.post('/ai/portfolio-advice').then(r => r.data).catch(() => null)
+}
+
+export function enhanceReport() {
+  return aiApi.post('/ai/enhance-report').then(r => r.data).catch(() => null)
+}
