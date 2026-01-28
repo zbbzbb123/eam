@@ -10,6 +10,7 @@ from src.api.quotes import router as quotes_router
 from src.api.portfolio import router as portfolio_router
 from src.api.signals import router as signals_router
 from src.api.analyzers import router as analyzers_router
+from src.scheduler.scheduler import router as scheduler_router, get_scheduler_service
 
 
 @asynccontextmanager
@@ -17,8 +18,12 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup
     init_db()
+    scheduler = get_scheduler_service()
+    scheduler.start()
+    scheduler.setup_default_jobs()
     yield
-    # Shutdown (nothing to do)
+    # Shutdown
+    scheduler.stop()
 
 
 app = FastAPI(
@@ -43,6 +48,7 @@ app.include_router(quotes_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(signals_router, prefix="/api")
 app.include_router(analyzers_router, prefix="/api")
+app.include_router(scheduler_router, prefix="/api")
 
 
 @app.get("/health")
