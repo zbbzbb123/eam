@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     tushare_token: str = ""
     fred_api_key: str = ""
 
+    # LLM
+    llm_base_url: str = "https://test-anas.feihua100.com/gw/v1"
+    llm_api_key: str = ""
+
     # Telegram
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
