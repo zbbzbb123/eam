@@ -9,6 +9,7 @@ from src.api.holdings import router as holdings_router
 from src.api.quotes import router as quotes_router
 from src.api.portfolio import router as portfolio_router
 from src.api.signals import router as signals_router
+from src.api.reports import router as reports_router
 from src.api.analyzers import router as analyzers_router
 from src.scheduler.scheduler import router as scheduler_router, get_scheduler_service
 
@@ -47,6 +48,7 @@ app.include_router(holdings_router, prefix="/api")
 app.include_router(quotes_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")
 app.include_router(signals_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
 app.include_router(analyzers_router, prefix="/api")
 app.include_router(scheduler_router, prefix="/api")
 

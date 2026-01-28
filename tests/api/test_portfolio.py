@@ -167,3 +167,89 @@ class TestPortfolioAPI:
         data = response.json()
         assert data["needs_rebalance"] is True
         assert len(data["suggestions"]) > 0
+
+    # ===== Portfolio Summary Endpoint Tests =====
+
+    def test_portfolio_summary_empty(self, client):
+        """Test summary with no holdings."""
+        response = client.get("/api/portfolio/summary")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_value"] == "0"
+        assert len(data["tiers"]) == 3
+        for t in data["tiers"]:
+            assert t["actual_pct"] == "0"
+            assert t["holdings_count"] == 0
+
+    def test_portfolio_summary_with_holdings(self, client):
+        """Test summary with holdings in each tier."""
+        client.post("/api/holdings", json={
+            "symbol": "VOO", "market": "US", "tier": "stable",
+            "quantity": "100.0", "avg_cost": "400.00",
+            "first_buy_date": "2025-01-01", "buy_reason": "S&P 500",
+        })
+        client.post("/api/holdings", json={
+            "symbol": "QQQ", "market": "US", "tier": "medium",
+            "quantity": "50.0", "avg_cost": "600.00",
+            "first_buy_date": "2025-01-01", "buy_reason": "Nasdaq",
+        })
+        client.post("/api/holdings", json={
+            "symbol": "NVDA", "market": "US", "tier": "gamble",
+            "quantity": "30.0", "avg_cost": "1000.00",
+            "first_buy_date": "2025-01-01", "buy_reason": "AI play",
+        })
+
+        response = client.get("/api/portfolio/summary")
+        assert response.status_code == 200
+        data = response.json()
+        assert Decimal(data["total_value"]) == Decimal("100000")
+        assert len(data["tiers"]) == 3
+
+        tiers_by_name = {t["tier"]: t for t in data["tiers"]}
+        assert Decimal(tiers_by_name["stable"]["actual_pct"]) == Decimal("40")
+        assert tiers_by_name["stable"]["holdings_count"] == 1
+        assert Decimal(tiers_by_name["stable"]["market_value"]) == Decimal("40000")
+        assert Decimal(tiers_by_name["stable"]["deviation"]) == Decimal("0")
+
+    def test_portfolio_summary_deviation(self, client):
+        """Test that deviation is calculated correctly."""
+        # All in gamble tier
+        client.post("/api/holdings", json={
+            "symbol": "NVDA", "market": "US", "tier": "gamble",
+            "quantity": "100.0", "avg_cost": "1000.00",
+            "first_buy_date": "2025-01-01", "buy_reason": "YOLO",
+        })
+
+        response = client.get("/api/portfolio/summary")
+        data = response.json()
+        tiers_by_name = {t["tier"]: t for t in data["tiers"]}
+        assert Decimal(tiers_by_name["gamble"]["deviation"]) == Decimal("70")
+        assert Decimal(tiers_by_name["stable"]["deviation"]) == Decimal("-40")
+
+    # ===== Holdings Summary Endpoint Tests =====
+
+    def test_holdings_summary_empty(self, client):
+        """Test holdings summary with no holdings."""
+        response = client.get("/api/portfolio/holdings-summary")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_holdings_summary_with_holdings(self, client):
+        """Test holdings summary returns P&L data."""
+        client.post("/api/holdings", json={
+            "symbol": "VOO", "market": "US", "tier": "stable",
+            "quantity": "100.0", "avg_cost": "400.00",
+            "first_buy_date": "2025-01-01", "buy_reason": "S&P 500",
+        })
+
+        response = client.get("/api/portfolio/holdings-summary")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        h = data[0]
+        assert h["symbol"] == "VOO"
+        assert h["tier"] == "stable"
+        assert Decimal(h["current_price"]) == Decimal("400")  # falls back to avg_cost
+        assert Decimal(h["market_value"]) == Decimal("40000")
+        assert Decimal(h["pnl"]) == Decimal("0")
+        assert Decimal(h["pnl_pct"]) == Decimal("0")

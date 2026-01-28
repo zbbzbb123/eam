@@ -203,3 +203,85 @@ class SignalResponse(BaseModel):
 class SignalUpdate(BaseModel):
     """Schema for updating a signal."""
     status: Optional[SignalStatusEnum] = None
+
+
+# ===== Portfolio Summary Schemas =====
+
+class TierSummaryResponse(BaseModel):
+    """Schema for tier summary in portfolio."""
+    tier: str
+    target_pct: Decimal
+    actual_pct: Decimal
+    deviation: Decimal
+    market_value: Decimal
+    holdings_count: int
+
+
+class PortfolioSummaryResponse(BaseModel):
+    """Schema for portfolio summary."""
+    total_value: Decimal
+    tiers: List[TierSummaryResponse]
+
+
+class HoldingSummaryResponse(BaseModel):
+    """Schema for a holding with P&L info."""
+    id: int
+    symbol: str
+    market: MarketEnum
+    tier: TierEnum
+    quantity: Decimal
+    avg_cost: Decimal
+    current_price: Decimal
+    market_value: Decimal
+    pnl: Decimal
+    pnl_pct: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ===== Weekly Report Schemas =====
+
+class TierSummaryReportResponse(BaseModel):
+    """Tier summary within a weekly report."""
+    tier: str
+    target_pct: Decimal
+    actual_pct: Decimal
+    deviation_pct: Decimal
+    market_value: Decimal
+    holdings_count: int
+
+
+class PortfolioSummaryReportResponse(BaseModel):
+    """Portfolio summary within a weekly report."""
+    total_value: Decimal
+    tiers: List[TierSummaryReportResponse]
+
+
+class SignalSummaryItemResponse(BaseModel):
+    """Signal summary item."""
+    sector: str
+    count: int
+    max_severity: str
+    titles: List[str]
+
+
+class RiskAlertResponse(BaseModel):
+    """Risk alert."""
+    level: str
+    message: str
+    symbol: Optional[str] = None
+
+
+class ActionItemResponse(BaseModel):
+    """Action item."""
+    priority: str
+    description: str
+
+
+class WeeklyReportResponse(BaseModel):
+    """Full weekly report response."""
+    report_date: date
+    portfolio_summary: PortfolioSummaryReportResponse
+    signal_summary: List[SignalSummaryItemResponse]
+    risk_alerts: List[RiskAlertResponse]
+    action_items: List[ActionItemResponse]
