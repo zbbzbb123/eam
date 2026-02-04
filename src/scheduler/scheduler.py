@@ -12,45 +12,168 @@ logger = logging.getLogger(__name__)
 
 # Default schedule: when each task should run daily
 DEFAULT_SCHEDULE = {
-    "collect_market_data": {"hour": 17, "minute": 0},       # After market close
-    "collect_macro_data": {"hour": 18, "minute": 0},         # Daily evening
-    "run_analyzers": {"hour": 18, "minute": 30},              # After data collection
-    "collect_alternative_data": {"hour": 19, "minute": 0},    # GitHub, HuggingFace weekly
+    "collect_market_data":      {"hour": 17, "minute": 0},     # A-share close data
+    "collect_macro_data":       {"hour": 17, "minute": 10},    # Macro data
+    "run_analyzers":            {"hour": 17, "minute": 20},    # Run signal analyzers
+    "generate_daily_report_pm": {"hour": 17, "minute": 30},    # Daily report #1 (A-share)
+    "collect_market_data_am":   {"hour": 6, "minute": 30},     # US overnight data
+    "generate_daily_report_am": {"hour": 7, "minute": 0},      # Daily report #2 (US market)
+}
+
+# Weekly schedule
+WEEKLY_SCHEDULE = {
+    "generate_weekly_report_sat": {"day_of_week": 5, "hour": 7, "minute": 0},    # Saturday 07:00
+    "generate_weekly_report_sun": {"day_of_week": 6, "hour": 22, "minute": 0},   # Sunday 22:00
 }
 
 
 def _collect_market_data() -> None:
-    """Collect market data from structured collectors."""
+    """Collect market data from structured collectors and persist to DB."""
     logger.info("Running scheduled market data collection")
     try:
         from src.collectors.registry import get_registry
+        from src.db.database import SessionLocal
+        from src.services.storage import StorageService
+
         registry = get_registry()
-        for name in ["northbound", "tushare"]:
-            info = registry.get(name)
+        db = SessionLocal()
+        try:
+            storage = StorageService(db)
+
+            # Northbound flow
+            info = registry.get("northbound")
             if info and info.is_configured():
                 try:
-                    registry.run(name)
-                    logger.info(f"Collected {name} data")
+                    result = registry.run("northbound")
+                    n = storage.store_northbound_flow(result)
+                    logger.info(f"Stored {n} northbound flow records")
                 except Exception as e:
-                    logger.error(f"Failed to collect {name}: {e}")
+                    logger.error(f"Failed to collect northbound: {e}")
+
+            # Sector data
+            info = registry.get("sector")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("sector")
+                    n = storage.store_sectors(result)
+                    logger.info(f"Stored {n} sector snapshot records")
+                except Exception as e:
+                    logger.error(f"Failed to collect sector: {e}")
+
+            # Market indicators (VIX, gold, silver, copper)
+            info = registry.get("market_indicators")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("market_indicators")
+                    n = storage.store_market_indicators(result)
+                    logger.info(f"Stored {n} market indicator records")
+                except Exception as e:
+                    logger.error(f"Failed to collect market_indicators: {e}")
+
+            # Fundamentals (holdings + watchlist)
+            info = registry.get("fundamentals")
+            if info and info.is_configured():
+                try:
+                    from src.db.models import Holding, HoldingStatus, Watchlist
+                    holdings = db.query(Holding).filter(
+                        Holding.status == HoldingStatus.ACTIVE
+                    ).all()
+                    pairs = [(h.symbol, h.market.value) for h in holdings if h.symbol != "CASH"]
+                    # Also include watchlist symbols
+                    watchlist_items = db.query(Watchlist).all()
+                    watchlist_pairs = [(w.symbol, w.market.value) for w in watchlist_items]
+                    # Deduplicate
+                    all_pairs = list(set(pairs + watchlist_pairs))
+                    if all_pairs:
+                        collector = info.collector_class()
+                        result = collector.fetch_all_holdings_fundamentals(all_pairs)
+                        n = storage.store_fundamentals(result)
+                        logger.info(f"Stored fundamentals for {n} symbols (holdings + watchlist)")
+                except Exception as e:
+                    logger.error(f"Failed to collect fundamentals: {e}")
+
+            # Sector fund flows
+            info = registry.get("sector_flow")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("sector_flow")
+                    n = storage.store_sector_flows(result)
+                    logger.info(f"Stored {n} sector fund flow records")
+                except Exception as e:
+                    logger.error(f"Failed to collect sector_flow: {e}")
+
+            # Market breadth (advance/decline)
+            info = registry.get("market_breadth")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("market_breadth")
+                    n = storage.store_market_breadth(result)
+                    logger.info(f"Stored {n} market breadth records")
+                except Exception as e:
+                    logger.error(f"Failed to collect market_breadth: {e}")
+
+            # TuShare (index valuations + ETF NAVs)
+            info = registry.get("tushare")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("tushare")
+                    n = storage.store_tushare_data(result)
+                    logger.info(f"Stored {n} TuShare records (index valuations + fund NAVs)")
+                except Exception as e:
+                    logger.error(f"Failed to collect tushare: {e}")
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Market data collection failed: {e}")
 
 
 def _collect_macro_data() -> None:
-    """Collect macroeconomic data."""
+    """Collect macroeconomic data and persist to DB."""
     logger.info("Running scheduled macro data collection")
     try:
         from src.collectors.registry import get_registry
+        from src.db.database import SessionLocal
+        from src.services.storage import StorageService
+        from datetime import date, timedelta
+        import asyncio
+
         registry = get_registry()
-        for name in ["fred"]:
-            info = registry.get(name)
+        db = SessionLocal()
+        try:
+            storage = StorageService(db)
+
+            # FRED macro series
+            info = registry.get("fred")
             if info and info.is_configured():
                 try:
-                    registry.run(name)
-                    logger.info(f"Collected {name} data")
+                    end = date.today()
+                    start = end - timedelta(days=30)
+                    result = registry.run("fred", start_date=start, end_date=end)
+                    n = storage.store_fred_data(result)
+                    logger.info(f"Stored {n} FRED data points")
                 except Exception as e:
-                    logger.error(f"Failed to collect {name}: {e}")
+                    logger.error(f"Failed to collect fred: {e}")
+
+                # Yield spread (separate call)
+                try:
+                    collector = info.collector_class()
+                    spread = asyncio.run(collector.fetch_yield_spread())
+                    n = storage.store_yield_spread(spread)
+                    logger.info(f"Stored {n} yield spread record")
+                except Exception as e:
+                    logger.error(f"Failed to collect yield spread: {e}")
+
+            # CN Macro (PMI/CPI/M2)
+            info = registry.get("cn_macro")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("cn_macro")
+                    n = storage.store_cn_macro(result)
+                    logger.info(f"Stored {n} CN macro data points")
+                except Exception as e:
+                    logger.error(f"Failed to collect cn_macro: {e}")
+        finally:
+            db.close()
     except Exception as e:
         logger.error(f"Macro data collection failed: {e}")
 
@@ -71,13 +194,140 @@ def _run_analyzers() -> None:
         logger.error(f"Analyzer run failed: {e}")
 
 
+def _generate_daily_report() -> None:
+    """Generate daily brief report (macro + capital flow + commodities + LLM)."""
+    logger.info("Running scheduled daily report generation")
+    try:
+        from src.db.database import SessionLocal
+        from src.services.weekly_report import ReportService
+
+        db = SessionLocal()
+        try:
+            service = ReportService()
+            report = service.generate_daily_report(db)
+            logger.info(
+                f"Daily report generated: {len(report.sections)} sections, "
+                f"AI advice: {'yes' if report.ai_advice else 'no'}"
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Daily report generation failed: {e}")
+
+
+def _generate_weekly_report() -> None:
+    """Generate full weekly report (all analyzers + LLM advice)."""
+    logger.info("Running scheduled weekly report generation")
+    try:
+        from src.db.database import SessionLocal
+        from src.services.weekly_report import ReportService
+
+        db = SessionLocal()
+        try:
+            service = ReportService()
+            report = service.generate_weekly_report(db)
+            logger.info(
+                f"Weekly report generated: {len(report.sections)} sections, "
+                f"AI advice: {'yes' if report.ai_advice else 'no'}"
+            )
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Weekly report generation failed: {e}")
+
+
+def _generate_daily_report_new() -> None:
+    """Generate pre-stored daily report with per-holding AI commentary."""
+    logger.info("Running scheduled daily report generation (new)")
+    try:
+        from src.services.report_generator import DailyReportGenerator
+        from src.db.database import SessionLocal
+        db = SessionLocal()
+        try:
+            gen = DailyReportGenerator(db)
+            report_id = gen.generate()
+            logger.info(f"Daily report generated, id={report_id}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Daily report generation failed: {e}")
+
+
+def _collect_market_data_am() -> None:
+    """Collect overnight US market data (morning run)."""
+    logger.info("Running morning market data collection (US overnight)")
+    try:
+        from src.collectors.registry import get_registry
+        from src.db.database import SessionLocal
+        from src.services.storage import StorageService
+
+        registry = get_registry()
+        db = SessionLocal()
+        try:
+            storage = StorageService(db)
+
+            # Market indicators (VIX, gold, silver, copper - updated overnight)
+            info = registry.get("market_indicators")
+            if info and info.is_configured():
+                try:
+                    result = registry.run("market_indicators")
+                    n = storage.store_market_indicators(result)
+                    logger.info(f"AM: Stored {n} market indicator records")
+                except Exception as e:
+                    logger.error(f"AM: Failed to collect market_indicators: {e}")
+
+            # Fundamentals for US/HK holdings
+            info = registry.get("fundamentals")
+            if info and info.is_configured():
+                try:
+                    from src.db.models import Holding, HoldingStatus, Watchlist, Market
+                    holdings = db.query(Holding).filter(
+                        Holding.status == HoldingStatus.ACTIVE,
+                        Holding.market.in_([Market.US, Market.HK])
+                    ).all()
+                    pairs = [(h.symbol, h.market.value) for h in holdings if h.symbol != "CASH"]
+                    watchlist_items = db.query(Watchlist).filter(
+                        Watchlist.market.in_([Market.US, Market.HK])
+                    ).all()
+                    watchlist_pairs = [(w.symbol, w.market.value) for w in watchlist_items]
+                    all_pairs = list(set(pairs + watchlist_pairs))
+                    if all_pairs:
+                        collector = info.collector_class()
+                        result = collector.fetch_all_holdings_fundamentals(all_pairs)
+                        n = storage.store_fundamentals(result)
+                        logger.info(f"AM: Stored fundamentals for {n} US/HK symbols")
+                except Exception as e:
+                    logger.error(f"AM: Failed to collect US/HK fundamentals: {e}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"AM market data collection failed: {e}")
+
+
+def _generate_weekly_report_new() -> None:
+    """Generate pre-stored weekly report with strategic analysis."""
+    logger.info("Running scheduled weekly report generation (new)")
+    try:
+        from src.services.report_generator import WeeklyReportGenerator
+        from src.db.database import SessionLocal
+        db = SessionLocal()
+        try:
+            gen = WeeklyReportGenerator(db)
+            report_id = gen.generate()
+            logger.info(f"Weekly report generated, id={report_id}")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Weekly report generation failed: {e}")
+
+
 def _collect_alternative_data() -> None:
     """Collect alternative data (GitHub, HuggingFace)."""
     logger.info("Running scheduled alternative data collection")
     try:
         from src.collectors.registry import get_registry
         registry = get_registry()
-        for name in ["github", "huggingface", "openinsider", "jisilu", "commodity", "sec13f"]:
+        for name in ["jisilu", "commodity", "sec13f"]:
             info = registry.get(name)
             if info and info.is_configured():
                 try:
@@ -94,7 +344,14 @@ _DEFAULT_FUNCS = {
     "collect_market_data": _collect_market_data,
     "collect_macro_data": _collect_macro_data,
     "run_analyzers": _run_analyzers,
-    "collect_alternative_data": _collect_alternative_data,
+    "generate_daily_report_pm": _generate_daily_report_new,
+    "collect_market_data_am": _collect_market_data_am,
+    "generate_daily_report_am": _generate_daily_report_new,
+}
+
+_WEEKLY_FUNCS = {
+    "generate_weekly_report_sat": _generate_weekly_report_new,
+    "generate_weekly_report_sun": _generate_weekly_report_new,
 }
 
 
@@ -208,12 +465,47 @@ class SchedulerService:
         except JobLookupError:
             return False
 
+    def add_weekly_job(
+        self,
+        func: Callable,
+        day_of_week: int,
+        hour: int,
+        minute: int,
+        name: str,
+    ) -> str:
+        """Schedule a job to run weekly on a specific day and time.
+
+        Args:
+            func: The callable to execute.
+            day_of_week: Day of week (0=Mon, 6=Sun).
+            hour: Hour of day (0-23).
+            minute: Minute of hour (0-59).
+            name: Human-readable job name (also used as job ID).
+
+        Returns:
+            The job ID.
+        """
+        trigger = CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute)
+        job = self._scheduler.add_job(func, trigger=trigger, id=name, name=name, replace_existing=True)
+        logger.info(f"Added weekly job '{name}' on day {day_of_week} at {hour:02d}:{minute:02d}")
+        return job.id
+
     def setup_default_jobs(self) -> None:
-        """Register all jobs from DEFAULT_SCHEDULE."""
+        """Register all jobs from DEFAULT_SCHEDULE and WEEKLY_SCHEDULE."""
         for name, config in DEFAULT_SCHEDULE.items():
             func = _DEFAULT_FUNCS.get(name)
             if func:
                 self.add_daily_job(func, hour=config["hour"], minute=config["minute"], name=name)
+        for name, config in WEEKLY_SCHEDULE.items():
+            func = _WEEKLY_FUNCS.get(name)
+            if func:
+                self.add_weekly_job(
+                    func,
+                    day_of_week=config["day_of_week"],
+                    hour=config["hour"],
+                    minute=config["minute"],
+                    name=name,
+                )
 
 
 # ---------------------------------------------------------------------------
