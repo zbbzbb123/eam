@@ -29,12 +29,40 @@ export function getHolding(id) {
   return safe(api.get(`/holdings/${id}`), null)
 }
 
+export function createHolding(data) {
+  return api.post('/holdings', data).then(r => r.data)
+}
+
+export function createTransaction(holdingId, data) {
+  return api.post(`/holdings/${holdingId}/transactions`, data).then(r => r.data)
+}
+
+export function updateHolding(id, data) {
+  return api.patch(`/holdings/${id}`, data).then(r => r.data)
+}
+
+export function deleteHolding(id) {
+  return api.delete(`/holdings/${id}`)
+}
+
+export function syncPrices() {
+  return api.post('/portfolio/sync-prices', null, { timeout: 60000 }).then(r => r.data).catch(() => null)
+}
+
 export function getSignals(params = {}) {
   return safe(api.get('/signals', { params }), [])
 }
 
 export function getWeeklyReport() {
   return safe(api.get('/reports/weekly'), null)
+}
+
+export function getDailyReport() {
+  return safe(api.get('/reports/daily'), null)
+}
+
+export function getEnhancedWeeklyReport() {
+  return safe(api.get('/reports/weekly/enhanced'), null)
 }
 
 export function getSchedulerJobs() {
@@ -66,4 +94,37 @@ export function getPortfolioAdvice() {
 
 export function enhanceReport() {
   return aiApi.post('/ai/enhance-report').then(r => r.data).catch(() => null)
+}
+
+export function classifyTier(symbol, market) {
+  return aiApi.post('/ai/classify-tier', { symbol, market }).then(r => r.data).catch(() => ({ tier: 'medium' }))
+}
+
+// Pre-generated report endpoints
+export function getDailyReportList(limit = 10) {
+  return safe(api.get('/reports/daily/list', { params: { limit } }), [])
+}
+export function getDailyReportDetail(id) {
+  return safe(api.get(`/reports/daily/${id}`), null)
+}
+export function getWeeklyReportList(limit = 10) {
+  return safe(api.get('/reports/weekly/list', { params: { limit } }), [])
+}
+export function getWeeklyReportDetail(id) {
+  return safe(api.get(`/reports/weekly/${id}`), null)
+}
+export function triggerDailyReport() {
+  return safe(aiApi.post('/reports/daily/generate'), null)
+}
+export function triggerWeeklyReport() {
+  return safe(aiApi.post('/reports/weekly/generate'), null)
+}
+
+// Collection report
+export function getCollectionReportRange(params = {}) {
+  return safe(api.get('/collection-report/range', { params }), { source_names: [], days: [] })
+}
+
+export function getCollectionReport(reportDate) {
+  return safe(api.get('/collection-report', { params: { report_date: reportDate } }), null)
 }
