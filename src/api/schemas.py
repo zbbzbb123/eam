@@ -227,6 +227,7 @@ class HoldingSummaryResponse(BaseModel):
     """Schema for a holding with P&L info."""
     id: int
     symbol: str
+    name: str = ""
     market: MarketEnum
     tier: TierEnum
     quantity: Decimal
@@ -285,3 +286,54 @@ class WeeklyReportResponse(BaseModel):
     signal_summary: List[SignalSummaryItemResponse]
     risk_alerts: List[RiskAlertResponse]
     action_items: List[ActionItemResponse]
+
+
+# ===== Enhanced Report Schemas =====
+
+class AnalyzerSectionResponse(BaseModel):
+    """A single analyzer section in the enhanced report."""
+    name: str
+    rating: Optional[str] = None
+    score: Optional[int] = None
+    summary: str
+    details: List[str] = []
+    recommendations: List[str] = []
+    data: Optional[dict] = None
+
+
+class EnhancedReportResponse(BaseModel):
+    """Full enhanced report response (daily or weekly)."""
+    report_date: date
+    report_type: str  # "daily" or "weekly"
+    sections: List[AnalyzerSectionResponse]
+    ai_advice: Optional[str] = None
+    # Legacy fields (populated in weekly reports)
+    portfolio_summary: Optional[PortfolioSummaryReportResponse] = None
+    signal_summary: List[SignalSummaryItemResponse] = []
+    risk_alerts: List[RiskAlertResponse] = []
+    action_items: List[ActionItemResponse] = []
+
+
+# ===== Generated Report Schemas =====
+
+class GeneratedReportListItem(BaseModel):
+    """List item for generated reports."""
+    id: int
+    report_type: str
+    report_date: date
+    generated_at: datetime
+    summary: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GeneratedReportDetail(BaseModel):
+    """Full generated report with content."""
+    id: int
+    report_type: str
+    report_date: date
+    generated_at: datetime
+    summary: Optional[str] = None
+    content: dict
+
+    model_config = ConfigDict(from_attributes=True)
