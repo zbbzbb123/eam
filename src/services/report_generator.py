@@ -6,14 +6,16 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 
-from sqlalchemy import desc
+from sqlalchemy import desc, func as sa_func
 from sqlalchemy.orm import Session
 
 from src.db.models import (
-    Holding, HoldingStatus, Market, Tier, DailyQuote, Signal, Watchlist,
+    Holding, HoldingStatus, Market, Tier, DailyQuote, Signal, SignalSeverity,
+    Watchlist,
 )
 from src.db.models_market_data import (
-    GeneratedReport, MarketIndicatorSnapshot, FundNavSnapshot, FundamentalSnapshot,
+    GeneratedReport, MarketIndicatorSnapshot, FundNavSnapshot,
+    FundamentalSnapshot, NorthboundFlow,
 )
 from src.services.llm_client import LLMClient, ModelChoice, LLMError
 
@@ -64,6 +66,21 @@ OPPORTUNITY_SYSTEM_PROMPT = """你是一位专业投资顾问。分析以下标�
   "signal_type": "超跌反弹/估值低位/资金流入/技术突破/高成长低估值 之一"
 }"""
 
+WEEKLY_HOLDING_SYSTEM_PROMPT = """你是一位专业投资顾问，进行中长期持仓分析。
+
+要求严格按JSON格式回复：
+{
+  "ai_comment": "2-3句话的中长期观点，持仓逻辑是否还成立，仓位建议",
+  "action": "hold/add/reduce/sell 之一",
+  "ai_detail": "详细分析报告，markdown格式，包含：\\n## 持仓逻辑回顾\\n...\\n## 中期催化剂\\n...\\n## 风险因素\\n...\\n## 仓位建议\\n..."
+}"""
+
+WEEKLY_SUMMARY_SYSTEM_PROMPT = """你是一位专业投资顾问。根据以下本周市场和持仓数据，生成一段总结（100字以内），概括本周市场关键变化和持仓整体表现。只返回总结文字，不要任何其他格式。"""
+
+
+# ======================================================================
+# Module-level shared helpers
+# ======================================================================
 
 def _symbol_to_ts_code(symbol: str) -> str:
     """Convert a 6-digit CN symbol to TuShare ts_code format."""
@@ -86,6 +103,297 @@ def _strip_markdown_fences(text: str) -> str:
     return text
 
 
+def _get_usd_cny_rate_static(db: Session) -> Decimal:
+    """Get latest USD/CNY rate from MarketIndicatorSnapshot."""
+    row = (
+        db.query(MarketIndicatorSnapshot)
+        .filter(MarketIndicatorSnapshot.symbol == "CNY=X")
+        .order_by(desc(MarketIndicatorSnapshot.date))
+        .first()
+    )
+    if row and row.value:
+        return Decimal(str(row.value))
+    return Decimal("7.25")  # sensible fallback
+
+
+def _get_latest_price_cn_etf_static(db: Session, symbol: str) -> Optional[Decimal]:
+    """Try FundNavSnapshot first, then DailyQuote for CN ETFs."""
+    ts_code = _symbol_to_ts_code(symbol)
+    nav = (
+        db.query(FundNavSnapshot)
+        .filter(FundNavSnapshot.ts_code == ts_code)
+        .order_by(desc(FundNavSnapshot.nav_date))
+        .first()
+    )
+    if nav and nav.unit_nav:
+        return Decimal(str(nav.unit_nav))
+
+    quote = (
+        db.query(DailyQuote)
+        .filter(
+            DailyQuote.symbol == symbol,
+            DailyQuote.market == Market.CN,
+        )
+        .order_by(desc(DailyQuote.trade_date))
+        .first()
+    )
+    if quote and quote.close:
+        return Decimal(str(quote.close))
+
+    return None
+
+
+def _get_latest_price_static(db: Session, holding: Holding) -> Decimal:
+    """Return latest price for a holding. Fallback to avg_cost."""
+    if holding.symbol == "CASH":
+        return Decimal("1")
+
+    if holding.market == Market.CN and _is_cn_etf(holding.symbol):
+        price = _get_latest_price_cn_etf_static(db, holding.symbol)
+        if price is not None:
+            return price
+
+    quote = (
+        db.query(DailyQuote)
+        .filter(
+            DailyQuote.symbol == holding.symbol,
+            DailyQuote.market == holding.market,
+        )
+        .order_by(desc(DailyQuote.trade_date))
+        .first()
+    )
+    if quote and quote.close:
+        return Decimal(str(quote.close))
+
+    return Decimal(str(holding.avg_cost))
+
+
+def _to_cny_static(value: Decimal, market: Market, symbol: str, usd_cny: Decimal) -> Decimal:
+    """Convert a value in local currency to CNY."""
+    if symbol == "CASH" or market == Market.CN:
+        return value
+    if market == Market.US:
+        return value * usd_cny
+    if market == Market.HK:
+        return value * HKD_CNY_RATE
+    return value
+
+
+def _get_stock_name_static(db: Session, symbol: str, market: Market) -> str:
+    """Get stock name from FundamentalSnapshot or fallback to THEME_MAP/symbol."""
+    if symbol == "CASH":
+        return "现金"
+
+    market_value = market.value if isinstance(market, Market) else market
+    fundamental = (
+        db.query(FundamentalSnapshot)
+        .filter(
+            FundamentalSnapshot.symbol == symbol,
+            FundamentalSnapshot.market == market_value,
+        )
+        .order_by(FundamentalSnapshot.snapshot_date.desc())
+        .first()
+    )
+    if fundamental and fundamental.name:
+        return fundamental.name
+
+    return THEME_MAP.get(symbol, symbol)
+
+
+def _get_latest_fundamental_static(
+    db: Session, symbol: str, market_value: str
+) -> Optional[FundamentalSnapshot]:
+    """Get the latest fundamental snapshot for a symbol."""
+    return (
+        db.query(FundamentalSnapshot)
+        .filter(
+            FundamentalSnapshot.symbol == symbol,
+            FundamentalSnapshot.market == market_value,
+        )
+        .order_by(FundamentalSnapshot.snapshot_date.desc())
+        .first()
+    )
+
+
+def _get_recent_quotes_static(
+    db: Session, symbol: str, market: Market
+) -> List[DailyQuote]:
+    """Get recent quotes (last 30 days) sorted ascending by date."""
+    since = date.today() - timedelta(days=LOOKBACK_DAYS)
+    return (
+        db.query(DailyQuote)
+        .filter(
+            DailyQuote.symbol == symbol,
+            DailyQuote.market == market,
+            DailyQuote.trade_date >= since,
+        )
+        .order_by(DailyQuote.trade_date.asc())
+        .all()
+    )
+
+
+def _calc_30d_change(quotes: List[DailyQuote]) -> Optional[float]:
+    """Calculate 30-day price change percentage."""
+    if len(quotes) < 2:
+        return None
+    oldest_close = quotes[0].close
+    newest_close = quotes[-1].close
+    if oldest_close is None or newest_close is None or oldest_close == 0:
+        return None
+    return float((newest_close - oldest_close) / oldest_close)
+
+
+def _detect_opportunity(
+    pe: Optional[float],
+    revenue_growth: Optional[float],
+    change_30d: Optional[float],
+    upside: Optional[float],
+) -> List[str]:
+    """Detect opportunity signals. Returns signal text list."""
+    signals: List[str] = []
+
+    if change_30d is not None and change_30d < float(PULLBACK_THRESHOLD):
+        signals.append("回调关注")
+
+    if pe is not None and 0 < pe < PE_CHEAP:
+        signals.append("估值合理")
+
+    if (
+        revenue_growth is not None
+        and pe is not None
+        and revenue_growth > float(GROWTH_OUTSTANDING_VALUE)
+        and 0 < pe < OUTSTANDING_PE_CAP
+    ):
+        signals.append("性价比突出")
+
+    if upside is not None and abs(upside) <= float(NEAR_TARGET_THRESHOLD):
+        signals.append("接近目标价")
+
+    return signals
+
+
+def _scan_opportunities_static(
+    db: Session, llm: LLMClient
+) -> List[Dict[str, Any]]:
+    """Scan watchlist items for investment opportunities."""
+    watchlist_items = db.query(Watchlist).all()
+    if not watchlist_items:
+        return []
+
+    opportunities: List[Dict[str, Any]] = []
+
+    for item in watchlist_items:
+        market_value = item.market.value if isinstance(item.market, Market) else item.market
+        fundamental = _get_latest_fundamental_static(db, item.symbol, market_value)
+        quotes = _get_recent_quotes_static(db, item.symbol, item.market)
+
+        # Current price
+        price = None
+        if quotes and quotes[-1].close is not None:
+            price = float(quotes[-1].close)
+
+        # PE
+        pe = float(fundamental.pe_ratio) if fundamental and fundamental.pe_ratio else None
+
+        # Revenue growth
+        revenue_growth = (
+            float(fundamental.revenue_growth)
+            if fundamental and fundamental.revenue_growth is not None
+            else None
+        )
+
+        # 30d change
+        change_30d = _calc_30d_change(quotes)
+
+        # Target price / upside
+        target_price = float(fundamental.target_price) if fundamental and fundamental.target_price else None
+        upside = None
+        if price and price > 0 and target_price:
+            upside = (target_price - price) / price
+
+        # Detect opportunity signals
+        opp_signals = _detect_opportunity(pe, revenue_growth, change_30d, upside)
+
+        if not opp_signals:
+            continue
+
+        name = fundamental.name if fundamental and fundamental.name else item.symbol
+
+        opp_entry: Dict[str, Any] = {
+            "symbol": item.symbol,
+            "name": name,
+            "market": market_value,
+            "signal_type": ", ".join(opp_signals),
+            "timeframe": "长期",
+            "reason": "",
+            "detail": "",
+            "target_price": target_price,
+            "current_price": price,
+        }
+
+        # Try to enrich with AI
+        ai_result = _get_opportunity_ai_static(
+            llm, opp_entry, item, fundamental, pe, revenue_growth, change_30d, opp_signals
+        )
+        if ai_result:
+            opp_entry["reason"] = ai_result.get("reason", "")
+            opp_entry["detail"] = ai_result.get("detail", "")
+            opp_entry["timeframe"] = ai_result.get("timeframe", "长期")
+            ai_signal_type = ai_result.get("signal_type", "")
+            if ai_signal_type:
+                opp_entry["signal_type"] = ai_signal_type
+
+        opportunities.append(opp_entry)
+
+    return opportunities
+
+
+def _get_opportunity_ai_static(
+    llm: LLMClient,
+    opp_entry: Dict[str, Any],
+    item: Watchlist,
+    fundamental: Optional[FundamentalSnapshot],
+    pe: Optional[float],
+    revenue_growth: Optional[float],
+    change_30d: Optional[float],
+    opp_signals: List[str],
+) -> Optional[Dict[str, str]]:
+    """Call LLM for opportunity analysis. Returns parsed dict or None."""
+    lines = [
+        f"标的: {opp_entry['name']} ({opp_entry['symbol']})",
+        f"市场: {opp_entry['market']} | 主题: {item.theme}",
+    ]
+    if opp_entry.get("current_price"):
+        lines.append(f"当前价: {opp_entry['current_price']:.2f}")
+    if pe is not None:
+        lines.append(f"PE: {pe:.1f}")
+    if revenue_growth is not None:
+        lines.append(f"营收增长: {revenue_growth * 100:.1f}%")
+    if change_30d is not None:
+        lines.append(f"30日涨跌: {change_30d * 100:.1f}%")
+    if opp_entry.get("target_price"):
+        lines.append(f"目标价: {opp_entry['target_price']:.2f}")
+    lines.append(f"机会信号: {', '.join(opp_signals)}")
+
+    user_msg = "\n".join(lines)
+
+    try:
+        raw = asyncio.run(
+            llm.chat_with_system(
+                OPPORTUNITY_SYSTEM_PROMPT, user_msg, model=ModelChoice.FAST
+            )
+        )
+        text = _strip_markdown_fences(raw)
+        return json.loads(text)
+    except (LLMError, json.JSONDecodeError, ValueError, RuntimeError) as e:
+        logger.warning("Failed to get opportunity AI for %s: %s", opp_entry["symbol"], e)
+        return None
+
+
+# ======================================================================
+# DailyReportGenerator
+# ======================================================================
+
 class DailyReportGenerator:
     """Generates pre-stored daily reports with per-holding AI commentary."""
 
@@ -97,7 +405,7 @@ class DailyReportGenerator:
     def generate(self) -> int:
         """Generate a daily report and save to DB. Returns report ID."""
         now = datetime.now()
-        self._usd_cny = self._get_usd_cny_rate()
+        self._usd_cny = _get_usd_cny_rate_static(self.db)
 
         # 1. Build holdings data with P&L
         holdings_data, total_value_cny, cash_pct = self._build_holdings_data()
@@ -112,7 +420,7 @@ class DailyReportGenerator:
         self._enrich_with_ai(holdings_data, total_value_cny)
 
         # 5. Scan opportunities (watchlist + related sectors)
-        opportunities = self._scan_opportunities()
+        opportunities = _scan_opportunities_static(self.db, self._llm)
 
         # 6. Generate portfolio summary with AI
         today_pnl = sum(h.get("today_pnl", 0) for h in holdings_data)
@@ -151,82 +459,6 @@ class DailyReportGenerator:
         return report.id
 
     # ------------------------------------------------------------------
-    # Price helpers (same pattern as PortfolioHealthAnalyzer)
-    # ------------------------------------------------------------------
-
-    def _get_usd_cny_rate(self) -> Decimal:
-        """Get latest USD/CNY rate from MarketIndicatorSnapshot."""
-        row = (
-            self.db.query(MarketIndicatorSnapshot)
-            .filter(MarketIndicatorSnapshot.symbol == "CNY=X")
-            .order_by(desc(MarketIndicatorSnapshot.date))
-            .first()
-        )
-        if row and row.value:
-            return Decimal(str(row.value))
-        return Decimal("7.25")  # sensible fallback
-
-    def _get_latest_price_cn_etf(self, symbol: str) -> Optional[Decimal]:
-        """Try FundNavSnapshot first, then DailyQuote for CN ETFs."""
-        ts_code = _symbol_to_ts_code(symbol)
-        nav = (
-            self.db.query(FundNavSnapshot)
-            .filter(FundNavSnapshot.ts_code == ts_code)
-            .order_by(desc(FundNavSnapshot.nav_date))
-            .first()
-        )
-        if nav and nav.unit_nav:
-            return Decimal(str(nav.unit_nav))
-
-        quote = (
-            self.db.query(DailyQuote)
-            .filter(
-                DailyQuote.symbol == symbol,
-                DailyQuote.market == Market.CN,
-            )
-            .order_by(desc(DailyQuote.trade_date))
-            .first()
-        )
-        if quote and quote.close:
-            return Decimal(str(quote.close))
-
-        return None
-
-    def _get_latest_price(self, holding: Holding) -> Decimal:
-        """Return latest price for a holding. Fallback to avg_cost."""
-        if holding.symbol == "CASH":
-            return Decimal("1")
-
-        if holding.market == Market.CN and _is_cn_etf(holding.symbol):
-            price = self._get_latest_price_cn_etf(holding.symbol)
-            if price is not None:
-                return price
-
-        quote = (
-            self.db.query(DailyQuote)
-            .filter(
-                DailyQuote.symbol == holding.symbol,
-                DailyQuote.market == holding.market,
-            )
-            .order_by(desc(DailyQuote.trade_date))
-            .first()
-        )
-        if quote and quote.close:
-            return Decimal(str(quote.close))
-
-        return Decimal(str(holding.avg_cost))
-
-    def _to_cny(self, value: Decimal, market: Market, symbol: str) -> Decimal:
-        """Convert a value in local currency to CNY."""
-        if symbol == "CASH" or market == Market.CN:
-            return value
-        if market == Market.US:
-            return value * self._usd_cny
-        if market == Market.HK:
-            return value * HKD_CNY_RATE
-        return value
-
-    # ------------------------------------------------------------------
     # Holdings data
     # ------------------------------------------------------------------
 
@@ -249,11 +481,11 @@ class DailyReportGenerator:
         # First pass: compute market values
         position_values: List[tuple] = []  # (holding, price, qty, avg_cost, value_cny)
         for h in holdings:
-            price = self._get_latest_price(h)
+            price = _get_latest_price_static(self.db, h)
             qty = Decimal(str(h.quantity))
             avg_cost = Decimal(str(h.avg_cost))
             local_value = price * qty
-            value_cny = self._to_cny(local_value, h.market, h.symbol)
+            value_cny = _to_cny_static(local_value, h.market, h.symbol, self._usd_cny)
             total_value_cny += value_cny
             if h.symbol == "CASH":
                 cash_value_cny += value_cny
@@ -271,9 +503,9 @@ class DailyReportGenerator:
             pnl_pct = float((price - avg_cost) / avg_cost * 100) if avg_cost else 0.0
 
             # Convert total_pnl to CNY for consistent aggregation
-            total_pnl_cny = float(self._to_cny(pnl_local, h.market, h.symbol))
+            total_pnl_cny = float(_to_cny_static(pnl_local, h.market, h.symbol, self._usd_cny))
 
-            name = self._get_stock_name(h.symbol, h.market)
+            name = _get_stock_name_static(self.db, h.symbol, h.market)
 
             near_stop = False
             near_tp = False
@@ -339,7 +571,7 @@ class DailyReportGenerator:
                     entry["today_change_pct"] = round(change_pct, 2)
                     # today_pnl = (current - prev) * quantity, converted to CNY
                     pnl_local = (latest_close - prev_close) * Decimal(str(entry["quantity"]))
-                    pnl_cny = float(self._to_cny(pnl_local, market_enum, entry["symbol"]))
+                    pnl_cny = float(_to_cny_static(pnl_local, market_enum, entry["symbol"], self._usd_cny))
                     entry["today_pnl"] = round(pnl_cny, 2)
 
     # ------------------------------------------------------------------
@@ -420,194 +652,6 @@ class DailyReportGenerator:
             return None
 
     # ------------------------------------------------------------------
-    # Opportunity scanning
-    # ------------------------------------------------------------------
-
-    def _scan_opportunities(self) -> List[Dict[str, Any]]:
-        """Scan watchlist items for investment opportunities."""
-        watchlist_items = self.db.query(Watchlist).all()
-        if not watchlist_items:
-            return []
-
-        opportunities: List[Dict[str, Any]] = []
-
-        for item in watchlist_items:
-            market_value = item.market.value if isinstance(item.market, Market) else item.market
-            fundamental = self._get_latest_fundamental(item.symbol, market_value)
-            quotes = self._get_recent_quotes(item.symbol, item.market)
-
-            # Current price
-            price = None
-            if quotes and quotes[-1].close is not None:
-                price = float(quotes[-1].close)
-
-            # PE
-            pe = float(fundamental.pe_ratio) if fundamental and fundamental.pe_ratio else None
-
-            # Revenue growth
-            revenue_growth = (
-                float(fundamental.revenue_growth)
-                if fundamental and fundamental.revenue_growth is not None
-                else None
-            )
-
-            # 30d change
-            change_30d = self._calc_30d_change(quotes)
-
-            # Target price / upside
-            target_price = float(fundamental.target_price) if fundamental and fundamental.target_price else None
-            upside = None
-            if price and price > 0 and target_price:
-                upside = (target_price - price) / price
-
-            # Detect opportunity signals
-            opp_signals = self._detect_opportunity(pe, revenue_growth, change_30d, upside)
-
-            if not opp_signals:
-                continue
-
-            name = fundamental.name if fundamental and fundamental.name else item.symbol
-
-            opp_entry: Dict[str, Any] = {
-                "symbol": item.symbol,
-                "name": name,
-                "market": market_value,
-                "signal_type": ", ".join(opp_signals),
-                "timeframe": "长期",
-                "reason": "",
-                "detail": "",
-                "target_price": target_price,
-                "current_price": price,
-            }
-
-            # Try to enrich with AI
-            ai_result = self._get_opportunity_ai(
-                opp_entry, item, fundamental, pe, revenue_growth, change_30d, opp_signals
-            )
-            if ai_result:
-                opp_entry["reason"] = ai_result.get("reason", "")
-                opp_entry["detail"] = ai_result.get("detail", "")
-                opp_entry["timeframe"] = ai_result.get("timeframe", "长期")
-                ai_signal_type = ai_result.get("signal_type", "")
-                if ai_signal_type:
-                    opp_entry["signal_type"] = ai_signal_type
-
-            opportunities.append(opp_entry)
-
-        return opportunities
-
-    def _get_opportunity_ai(
-        self,
-        opp_entry: Dict[str, Any],
-        item: Watchlist,
-        fundamental: Optional[FundamentalSnapshot],
-        pe: Optional[float],
-        revenue_growth: Optional[float],
-        change_30d: Optional[float],
-        opp_signals: List[str],
-    ) -> Optional[Dict[str, str]]:
-        """Call LLM for opportunity analysis. Returns parsed dict or None."""
-        lines = [
-            f"标的: {opp_entry['name']} ({opp_entry['symbol']})",
-            f"市场: {opp_entry['market']} | 主题: {item.theme}",
-        ]
-        if opp_entry.get("current_price"):
-            lines.append(f"当前价: {opp_entry['current_price']:.2f}")
-        if pe is not None:
-            lines.append(f"PE: {pe:.1f}")
-        if revenue_growth is not None:
-            lines.append(f"营收增长: {revenue_growth * 100:.1f}%")
-        if change_30d is not None:
-            lines.append(f"30日涨跌: {change_30d * 100:.1f}%")
-        if opp_entry.get("target_price"):
-            lines.append(f"目标价: {opp_entry['target_price']:.2f}")
-        lines.append(f"机会信号: {', '.join(opp_signals)}")
-
-        user_msg = "\n".join(lines)
-
-        try:
-            raw = asyncio.run(
-                self._llm.chat_with_system(
-                    OPPORTUNITY_SYSTEM_PROMPT, user_msg, model=ModelChoice.FAST
-                )
-            )
-            text = _strip_markdown_fences(raw)
-            return json.loads(text)
-        except (LLMError, json.JSONDecodeError, ValueError, RuntimeError) as e:
-            logger.warning("Failed to get opportunity AI for %s: %s", opp_entry["symbol"], e)
-            return None
-
-    def _get_latest_fundamental(
-        self, symbol: str, market_value: str
-    ) -> Optional[FundamentalSnapshot]:
-        """Get the latest fundamental snapshot for a symbol."""
-        return (
-            self.db.query(FundamentalSnapshot)
-            .filter(
-                FundamentalSnapshot.symbol == symbol,
-                FundamentalSnapshot.market == market_value,
-            )
-            .order_by(FundamentalSnapshot.snapshot_date.desc())
-            .first()
-        )
-
-    def _get_recent_quotes(
-        self, symbol: str, market: Market
-    ) -> List[DailyQuote]:
-        """Get recent quotes (last 30 days) sorted ascending by date."""
-        since = date.today() - timedelta(days=LOOKBACK_DAYS)
-        return (
-            self.db.query(DailyQuote)
-            .filter(
-                DailyQuote.symbol == symbol,
-                DailyQuote.market == market,
-                DailyQuote.trade_date >= since,
-            )
-            .order_by(DailyQuote.trade_date.asc())
-            .all()
-        )
-
-    @staticmethod
-    def _calc_30d_change(quotes: List[DailyQuote]) -> Optional[float]:
-        """Calculate 30-day price change percentage."""
-        if len(quotes) < 2:
-            return None
-        oldest_close = quotes[0].close
-        newest_close = quotes[-1].close
-        if oldest_close is None or newest_close is None or oldest_close == 0:
-            return None
-        return float((newest_close - oldest_close) / oldest_close)
-
-    @staticmethod
-    def _detect_opportunity(
-        pe: Optional[float],
-        revenue_growth: Optional[float],
-        change_30d: Optional[float],
-        upside: Optional[float],
-    ) -> List[str]:
-        """Detect opportunity signals. Returns signal text list."""
-        signals: List[str] = []
-
-        if change_30d is not None and change_30d < float(PULLBACK_THRESHOLD):
-            signals.append("回调关注")
-
-        if pe is not None and 0 < pe < PE_CHEAP:
-            signals.append("估值合理")
-
-        if (
-            revenue_growth is not None
-            and pe is not None
-            and revenue_growth > float(GROWTH_OUTSTANDING_VALUE)
-            and 0 < pe < OUTSTANDING_PE_CAP
-        ):
-            signals.append("性价比突出")
-
-        if upside is not None and abs(upside) <= float(NEAR_TARGET_THRESHOLD):
-            signals.append("接近目标价")
-
-        return signals
-
-    # ------------------------------------------------------------------
     # Summary generation
     # ------------------------------------------------------------------
 
@@ -648,27 +692,502 @@ class DailyReportGenerator:
         direction = "上涨" if today_pnl >= 0 else "下跌"
         return f"今日持仓整体{direction}{abs(today_pnl_pct):.1f}%，盈亏{'+' if today_pnl >= 0 else ''}{today_pnl:.0f}元"
 
+
+# ======================================================================
+# WeeklyReportGenerator
+# ======================================================================
+
+class WeeklyReportGenerator:
+    """Generates pre-stored weekly reports with macro context and strategic analysis."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self._llm = LLMClient()
+        self._usd_cny: Optional[Decimal] = None
+
+    def generate(self) -> int:
+        """Generate a weekly report and save to DB. Returns report ID."""
+        now = datetime.now()
+        week_end = now.date()
+        week_start = week_end - timedelta(days=week_end.weekday())  # Monday
+
+        self._usd_cny = _get_usd_cny_rate_static(self.db)
+
+        # 1. Build week summary
+        week_summary = self._build_week_summary(week_start, week_end)
+
+        # 2. Macro + capital flow (run analyzers)
+        macro_capital = self._build_macro_capital(week_start, week_end)
+
+        # 3. Holdings medium/long-term review
+        holdings = self._build_holdings_review(week_start)
+
+        # 4. Opportunities (reuse shared helper)
+        opportunities = _scan_opportunities_static(self.db, self._llm)
+
+        # 5. Risk alerts (from PortfolioHealthAnalyzer)
+        risk_alerts = self._build_risk_alerts()
+
+        # 6. Next week events (placeholder)
+        next_week_events: List[Dict[str, Any]] = []
+
+        # 7. AI summary for the week
+        week_summary["ai_summary"] = self._generate_week_summary_ai(
+            week_summary, macro_capital, holdings
+        )
+
+        content = {
+            "week_summary": week_summary,
+            "macro_capital": macro_capital,
+            "holdings": holdings,
+            "opportunities": opportunities,
+            "risk_alerts": risk_alerts,
+            "next_week_events": next_week_events,
+        }
+
+        # Create one-line summary for list
+        summary_text = week_summary.get("ai_summary", "")
+        if not summary_text:
+            pnl = week_summary.get("week_pnl", 0)
+            summary_text = f"本周盈亏 {pnl:+.0f} CNY"
+
+        report = GeneratedReport(
+            report_type="weekly",
+            report_date=now.date(),
+            generated_at=now,
+            summary=summary_text,
+            content=content,
+        )
+        self.db.add(report)
+        self.db.commit()
+        self.db.refresh(report)
+        logger.info(f"Weekly report generated, id={report.id}")
+        return report.id
+
     # ------------------------------------------------------------------
-    # Stock name resolution
+    # Week summary
     # ------------------------------------------------------------------
 
-    def _get_stock_name(self, symbol: str, market: Market) -> str:
-        """Get stock name from FundamentalSnapshot or fallback to THEME_MAP/symbol."""
-        if symbol == "CASH":
-            return "现金"
+    def _build_week_summary(self, week_start: date, week_end: date) -> Dict[str, Any]:
+        """Build the week_summary section with P&L and best/worst holdings."""
+        holdings = (
+            self.db.query(Holding)
+            .filter(Holding.status == HoldingStatus.ACTIVE)
+            .all()
+        )
 
-        market_value = market.value if isinstance(market, Market) else market
-        fundamental = (
-            self.db.query(FundamentalSnapshot)
-            .filter(
-                FundamentalSnapshot.symbol == symbol,
-                FundamentalSnapshot.market == market_value,
+        total_week_pnl_cny = Decimal("0")
+        total_current_value_cny = Decimal("0")
+        best_holding: Optional[Dict[str, Any]] = None
+        worst_holding: Optional[Dict[str, Any]] = None
+
+        for h in holdings:
+            if h.symbol == "CASH":
+                qty = Decimal(str(h.quantity))
+                total_current_value_cny += qty
+                continue
+
+            qty = Decimal(str(h.quantity))
+            current_price = _get_latest_price_static(self.db, h)
+            current_value_local = current_price * qty
+            current_value_cny = _to_cny_static(current_value_local, h.market, h.symbol, self._usd_cny)
+            total_current_value_cny += current_value_cny
+
+            # Get price at week_start
+            week_start_price = self._get_price_at_date(h.symbol, h.market, week_start)
+            if week_start_price is None:
+                week_start_price = current_price  # fallback: no change
+
+            if week_start_price and week_start_price != 0:
+                week_change_pct = float((current_price - week_start_price) / week_start_price * 100)
+            else:
+                week_change_pct = 0.0
+
+            week_pnl_local = (current_price - week_start_price) * qty
+            week_pnl_cny = _to_cny_static(week_pnl_local, h.market, h.symbol, self._usd_cny)
+            total_week_pnl_cny += week_pnl_cny
+
+            name = _get_stock_name_static(self.db, h.symbol, h.market)
+
+            if best_holding is None or week_change_pct > best_holding["pnl_pct"]:
+                best_holding = {"symbol": h.symbol, "name": name, "pnl_pct": round(week_change_pct, 2)}
+            if worst_holding is None or week_change_pct < worst_holding["pnl_pct"]:
+                worst_holding = {"symbol": h.symbol, "name": name, "pnl_pct": round(week_change_pct, 2)}
+
+        week_pnl_pct = (
+            float(total_week_pnl_cny / total_current_value_cny * 100)
+            if total_current_value_cny else 0.0
+        )
+
+        return {
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+            "week_pnl": round(float(total_week_pnl_cny), 2),
+            "week_pnl_pct": round(week_pnl_pct, 2),
+            "best_holding": (
+                {"symbol": best_holding["symbol"], "pnl_pct": best_holding["pnl_pct"]}
+                if best_holding else None
+            ),
+            "worst_holding": (
+                {"symbol": worst_holding["symbol"], "pnl_pct": worst_holding["pnl_pct"]}
+                if worst_holding else None
+            ),
+            "ai_summary": "",  # filled later
+        }
+
+    def _get_price_at_date(
+        self, symbol: str, market: Market, target_date: date
+    ) -> Optional[Decimal]:
+        """Get the closing price at or just before a given date."""
+        if _is_cn_etf(symbol) and market == Market.CN:
+            ts_code = _symbol_to_ts_code(symbol)
+            nav = (
+                self.db.query(FundNavSnapshot)
+                .filter(
+                    FundNavSnapshot.ts_code == ts_code,
+                    FundNavSnapshot.nav_date <= target_date,
+                )
+                .order_by(desc(FundNavSnapshot.nav_date))
+                .first()
             )
-            .order_by(FundamentalSnapshot.snapshot_date.desc())
+            if nav and nav.unit_nav:
+                return Decimal(str(nav.unit_nav))
+
+        quote = (
+            self.db.query(DailyQuote)
+            .filter(
+                DailyQuote.symbol == symbol,
+                DailyQuote.market == market,
+                DailyQuote.trade_date <= target_date,
+            )
+            .order_by(desc(DailyQuote.trade_date))
             .first()
         )
-        if fundamental and fundamental.name:
-            return fundamental.name
+        if quote and quote.close:
+            return Decimal(str(quote.close))
+        return None
 
-        # Fallback to theme map or symbol itself
-        return THEME_MAP.get(symbol, symbol)
+    # ------------------------------------------------------------------
+    # Macro + capital flow
+    # ------------------------------------------------------------------
+
+    def _build_macro_capital(self, week_start: date, week_end: date) -> Dict[str, Any]:
+        """Build macro_capital section using analyzers and DB queries."""
+        from src.analyzers.market_environment import MarketEnvironmentAnalyzer
+        from src.analyzers.capital_flow import CapitalFlowAnalyzer
+
+        # Run market environment analyzer
+        market_env = MarketEnvironmentAnalyzer(self.db)
+        env_report = market_env.analyze()
+
+        us_score = env_report.data.get("us_macro", {}).get("score") if env_report.data else None
+        cn_score = env_report.data.get("china_macro", {}).get("score") if env_report.data else None
+
+        # Build US/CN summaries from report details
+        us_summary = ""
+        cn_summary = ""
+        if env_report.details:
+            us_parts = [d for d in env_report.details if d.startswith("[US宏观]") or d.startswith("[利差]") or d.startswith("[CPI]") or d.startswith("[失业率]") or d.startswith("[VIX]")]
+            cn_parts = [d for d in env_report.details if d.startswith("[中国宏观]") or d.startswith("[PMI]") or d.startswith("[流动性]") or d.startswith("[Shibor") or d.startswith("[新增贷款]")]
+            if us_parts:
+                us_summary = "；".join(us_parts[:3])
+            if cn_parts:
+                cn_summary = "；".join(cn_parts[:3])
+
+        # Run capital flow analyzer
+        capital_flow = CapitalFlowAnalyzer(self.db)
+        cf_report = capital_flow.analyze()
+
+        nb_data = cf_report.data.get("northbound", {}) if cf_report.data else {}
+        sf_data = cf_report.data.get("sector_flow", {}) if cf_report.data else {}
+
+        # Weekly northbound flow: sum NorthboundFlow records for the week
+        northbound_weekly_flow = self._get_weekly_northbound_flow(week_start, week_end)
+        northbound_trend = nb_data.get("stance", "数据不足")
+
+        # Sector flow: top5 inflow / outflow from capital flow analyzer
+        sector_inflow_top5 = [
+            {"name": s["name"], "flow": round(s["main_net_inflow"], 2)}
+            for s in sf_data.get("top5_inflow", [])
+        ]
+        sector_outflow_top5 = [
+            {"name": s["name"], "flow": round(s["main_net_inflow"], 2)}
+            for s in sf_data.get("bottom5_outflow", [])
+        ]
+
+        # Key events: HIGH/CRITICAL signals this week
+        key_events = self._get_key_events(week_start, week_end)
+
+        return {
+            "us_score": us_score,
+            "cn_score": cn_score,
+            "us_summary": us_summary,
+            "cn_summary": cn_summary,
+            "northbound_weekly_flow": round(northbound_weekly_flow, 2),
+            "northbound_trend": northbound_trend,
+            "sector_inflow_top5": sector_inflow_top5,
+            "sector_outflow_top5": sector_outflow_top5,
+            "key_events": key_events,
+        }
+
+    def _get_weekly_northbound_flow(self, week_start: date, week_end: date) -> float:
+        """Sum NorthboundFlow.net_flow for the given week range."""
+        result = (
+            self.db.query(sa_func.sum(NorthboundFlow.net_flow))
+            .filter(
+                NorthboundFlow.trade_date >= week_start,
+                NorthboundFlow.trade_date <= week_end,
+            )
+            .scalar()
+        )
+        return float(result) if result else 0.0
+
+    def _get_key_events(self, week_start: date, week_end: date) -> List[str]:
+        """Extract titles of HIGH/CRITICAL signals from the current week."""
+        signals = (
+            self.db.query(Signal)
+            .filter(
+                Signal.severity.in_([SignalSeverity.HIGH, SignalSeverity.CRITICAL]),
+                Signal.created_at >= datetime.combine(week_start, datetime.min.time()),
+                Signal.created_at <= datetime.combine(week_end, datetime.max.time()),
+            )
+            .order_by(desc(Signal.created_at))
+            .limit(10)
+            .all()
+        )
+        return [s.title for s in signals]
+
+    # ------------------------------------------------------------------
+    # Holdings review (weekly perspective)
+    # ------------------------------------------------------------------
+
+    def _build_holdings_review(self, week_start: date) -> List[Dict[str, Any]]:
+        """Build holdings review with weekly change and medium-term AI commentary."""
+        holdings = (
+            self.db.query(Holding)
+            .filter(Holding.status == HoldingStatus.ACTIVE)
+            .all()
+        )
+
+        # First pass: compute total value for weight calculation
+        total_value_cny = Decimal("0")
+        position_data: List[tuple] = []
+        for h in holdings:
+            if h.symbol == "CASH":
+                qty = Decimal(str(h.quantity))
+                total_value_cny += qty
+                continue
+
+            current_price = _get_latest_price_static(self.db, h)
+            qty = Decimal(str(h.quantity))
+            avg_cost = Decimal(str(h.avg_cost))
+            current_value_local = current_price * qty
+            current_value_cny = _to_cny_static(current_value_local, h.market, h.symbol, self._usd_cny)
+            total_value_cny += current_value_cny
+
+            week_start_price = self._get_price_at_date(h.symbol, h.market, week_start)
+            if week_start_price is None:
+                week_start_price = current_price
+
+            position_data.append((h, current_price, qty, avg_cost, current_value_cny, week_start_price))
+
+        if total_value_cny == 0:
+            total_value_cny = Decimal("1")
+
+        # Second pass: build entries
+        entries: List[Dict[str, Any]] = []
+        for h, current_price, qty, avg_cost, current_value_cny, week_start_price in position_data:
+            weight_pct = float(current_value_cny / total_value_cny * 100)
+            total_pnl_pct = float((current_price - avg_cost) / avg_cost * 100) if avg_cost else 0.0
+
+            if week_start_price and week_start_price != 0:
+                week_change_pct = float((current_price - week_start_price) / week_start_price * 100)
+            else:
+                week_change_pct = 0.0
+
+            name = _get_stock_name_static(self.db, h.symbol, h.market)
+
+            entry: Dict[str, Any] = {
+                "symbol": h.symbol,
+                "name": name,
+                "market": h.market.value,
+                "tier": h.tier.value,
+                "weight_pct": round(weight_pct, 2),
+                "week_change_pct": round(week_change_pct, 2),
+                "total_pnl_pct": round(total_pnl_pct, 2),
+                "action": "hold",
+                "ai_comment": "",
+                "ai_detail": "",
+            }
+            entries.append(entry)
+
+        # Sort by week_change_pct ascending (worst first)
+        entries.sort(key=lambda e: e.get("week_change_pct", 0))
+
+        # AI enrichment for each holding (using QUALITY model)
+        self._enrich_holdings_weekly_ai(entries)
+
+        return entries
+
+    def _enrich_holdings_weekly_ai(self, holdings_data: List[Dict[str, Any]]) -> None:
+        """Add weekly AI commentary to each holding using QUALITY model."""
+        if not holdings_data:
+            return
+
+        async def _run_all():
+            tasks = [self._get_weekly_holding_ai(entry) for entry in holdings_data]
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        try:
+            results = asyncio.run(_run_all())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                results = loop.run_until_complete(_run_all())
+            finally:
+                loop.close()
+
+        for entry, result in zip(holdings_data, results):
+            if isinstance(result, Exception):
+                logger.warning("Weekly AI enrichment failed for %s: %s", entry["symbol"], result)
+                continue
+            if result:
+                entry["ai_comment"] = result.get("ai_comment", "")
+                action = result.get("action", "hold").lower()
+                if action in ("hold", "add", "reduce", "sell"):
+                    entry["action"] = action
+                entry["ai_detail"] = result.get("ai_detail", "")
+
+    async def _get_weekly_holding_ai(self, entry: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        """Call LLM for a single holding's weekly review (QUALITY model)."""
+        signals = (
+            self.db.query(Signal)
+            .filter(Signal.related_symbols.contains(entry["symbol"]))
+            .limit(5)
+            .all()
+        )
+
+        lines = [
+            f"持仓: {entry['name']} ({entry['symbol']}.{entry['market']})",
+            f"市场: {entry['market']} | 层级: {entry['tier']} | 仓位占比: {entry['weight_pct']}%",
+            f"本周涨跌: {'+' if entry['week_change_pct'] >= 0 else ''}{entry['week_change_pct']:.1f}%",
+            f"总盈亏: {'+' if entry['total_pnl_pct'] >= 0 else ''}{entry['total_pnl_pct']:.1f}%",
+        ]
+        if signals:
+            lines.append("本周相关信号:")
+            for sig in signals:
+                lines.append(f"  - [{sig.severity.value}] {sig.title}: {sig.description}")
+
+        user_msg = "\n".join(lines)
+
+        try:
+            raw = await self._llm.chat_with_system(
+                WEEKLY_HOLDING_SYSTEM_PROMPT, user_msg, model=ModelChoice.QUALITY
+            )
+            text = _strip_markdown_fences(raw)
+            return json.loads(text)
+        except (LLMError, json.JSONDecodeError, ValueError) as e:
+            logger.warning("Failed to get weekly AI for %s: %s", entry["symbol"], e)
+            return None
+
+    # ------------------------------------------------------------------
+    # Risk alerts
+    # ------------------------------------------------------------------
+
+    def _build_risk_alerts(self) -> List[Dict[str, Any]]:
+        """Build risk alerts from PortfolioHealthAnalyzer."""
+        from src.analyzers.portfolio_health import PortfolioHealthAnalyzer
+
+        analyzer = PortfolioHealthAnalyzer(self.db)
+        report = analyzer.analyze()
+
+        alerts: List[Dict[str, Any]] = []
+
+        if not report.data:
+            return alerts
+
+        # Concentration risk
+        holdings_data = report.data.get("holdings", [])
+        total_val = report.data.get("total_value_cny", 1)
+        for pos in holdings_data:
+            weight = pos["market_value_cny"] / total_val * 100 if total_val else 0
+            if weight > 25:
+                alerts.append({
+                    "level": "high",
+                    "message": f"{pos['symbol']} 持仓集中度过高（{weight:.0f}%）",
+                })
+
+        # Risk warnings from health analyzer
+        risk_warnings = report.data.get("risk_warnings", [])
+        for warning in risk_warnings:
+            alerts.append({
+                "level": "medium",
+                "message": warning,
+            })
+
+        # Tier deviation warnings
+        if report.details:
+            for detail in report.details:
+                if "[层级偏离]" in detail:
+                    alerts.append({
+                        "level": "low",
+                        "message": detail.replace("[层级偏离] ", ""),
+                    })
+
+        return alerts
+
+    # ------------------------------------------------------------------
+    # Weekly AI summary
+    # ------------------------------------------------------------------
+
+    def _generate_week_summary_ai(
+        self,
+        week_summary: Dict[str, Any],
+        macro_capital: Dict[str, Any],
+        holdings: List[Dict[str, Any]],
+    ) -> str:
+        """Generate AI summary for the week using QUALITY model."""
+        lines = [
+            f"本周盈亏: {'+' if week_summary['week_pnl'] >= 0 else ''}{week_summary['week_pnl']:.0f}元 ({'+' if week_summary['week_pnl_pct'] >= 0 else ''}{week_summary['week_pnl_pct']:.1f}%)",
+        ]
+        if week_summary.get("best_holding"):
+            bh = week_summary["best_holding"]
+            lines.append(f"最佳持仓: {bh['symbol']} ({'+' if bh['pnl_pct'] >= 0 else ''}{bh['pnl_pct']:.1f}%)")
+        if week_summary.get("worst_holding"):
+            wh = week_summary["worst_holding"]
+            lines.append(f"最差持仓: {wh['symbol']} ({'+' if wh['pnl_pct'] >= 0 else ''}{wh['pnl_pct']:.1f}%)")
+
+        if macro_capital.get("us_score") is not None:
+            lines.append(f"美国宏观评分: {macro_capital['us_score']}/100")
+        if macro_capital.get("cn_score") is not None:
+            lines.append(f"中国宏观评分: {macro_capital['cn_score']}/100")
+        if macro_capital.get("northbound_weekly_flow"):
+            lines.append(f"北向资金周净流入: {macro_capital['northbound_weekly_flow']:.1f}亿")
+        if macro_capital.get("key_events"):
+            lines.append(f"本周关键事件: {', '.join(macro_capital['key_events'][:3])}")
+
+        lines.append("持仓概况:")
+        for h in holdings[:5]:
+            lines.append(
+                f"  {h['name']}({h['symbol']}): 本周{'+' if h['week_change_pct'] >= 0 else ''}{h['week_change_pct']:.1f}%, "
+                f"仓位{h['weight_pct']:.1f}%"
+            )
+
+        user_msg = "\n".join(lines)
+
+        try:
+            raw = asyncio.run(
+                self._llm.chat_with_system(
+                    WEEKLY_SUMMARY_SYSTEM_PROMPT, user_msg, model=ModelChoice.QUALITY
+                )
+            )
+            summary = raw.strip().strip('"').strip("'")
+            if summary:
+                return summary
+        except (LLMError, RuntimeError) as e:
+            logger.warning("Failed to generate weekly AI summary: %s", e)
+
+        # Fallback template
+        pnl = week_summary.get("week_pnl", 0)
+        direction = "上涨" if pnl >= 0 else "下跌"
+        return f"本周持仓整体{direction}{abs(week_summary.get('week_pnl_pct', 0)):.1f}%，盈亏{pnl:+.0f}元"
