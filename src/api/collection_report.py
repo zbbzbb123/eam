@@ -1,6 +1,7 @@
 """Daily collection report API — summarizes data collected per day."""
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text, func
@@ -45,11 +46,17 @@ def _count_by_date(db: Session, model, date_col, target_date: date) -> int:
 
 
 def _count_by_created(db: Session, model, target_date: date) -> int:
-    """Count rows created on target_date (using created_at timestamp)."""
-    start = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0)
-    end = datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59)
+    """Count rows created on target_date in Asia/Shanghai timezone."""
+    # Convert Shanghai date boundaries to UTC for querying created_at (stored as UTC)
+    sh_tz = ZoneInfo("Asia/Shanghai")
+    start_sh = datetime(target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=sh_tz)
+    end_sh = datetime(target_date.year, target_date.month, target_date.day, 23, 59, 59, tzinfo=sh_tz)
+    # Convert to naive UTC for DB comparison (MySQL stores naive timestamps)
+    utc_tz = ZoneInfo("UTC")
+    start_utc = start_sh.astimezone(utc_tz).replace(tzinfo=None)
+    end_utc = end_sh.astimezone(utc_tz).replace(tzinfo=None)
     return db.query(func.count(model.id)).filter(
-        model.created_at.between(start, end)
+        model.created_at.between(start_utc, end_utc)
     ).scalar() or 0
 
 
@@ -62,7 +69,7 @@ def get_collection_report(
 
     返回每张采集表在该日期的入库行数和关键摘要。
     """
-    target = report_date or date.today()
+    target = report_date or datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
     sections: List[Dict[str, Any]] = []
 
@@ -165,11 +172,12 @@ def get_collection_report(
     macro_count = _count_by_created(db, MacroData, target)
     macro_detail = None
     if macro_count:
+        sh_tz = ZoneInfo("Asia/Shanghai")
+        utc_tz = ZoneInfo("UTC")
+        _start = datetime(target.year, target.month, target.day, tzinfo=sh_tz).astimezone(utc_tz).replace(tzinfo=None)
+        _end = datetime(target.year, target.month, target.day, 23, 59, 59, tzinfo=sh_tz).astimezone(utc_tz).replace(tzinfo=None)
         series = db.query(MacroData.series_id, func.count(MacroData.id)).filter(
-            MacroData.created_at.between(
-                datetime(target.year, target.month, target.day),
-                datetime(target.year, target.month, target.day, 23, 59, 59),
-            )
+            MacroData.created_at.between(_start, _end)
         ).group_by(MacroData.series_id).all()
         macro_detail = ", ".join(f"{s[0]}({s[1]})" for s in series)
     sections.append({
@@ -197,11 +205,12 @@ def get_collection_report(
     cn_count = _count_by_created(db, CnMacroRecord, target)
     cn_detail = None
     if cn_count:
+        sh_tz = ZoneInfo("Asia/Shanghai")
+        utc_tz = ZoneInfo("UTC")
+        _cn_start = datetime(target.year, target.month, target.day, tzinfo=sh_tz).astimezone(utc_tz).replace(tzinfo=None)
+        _cn_end = datetime(target.year, target.month, target.day, 23, 59, 59, tzinfo=sh_tz).astimezone(utc_tz).replace(tzinfo=None)
         indicators = db.query(CnMacroRecord.indicator, func.count(CnMacroRecord.id)).filter(
-            CnMacroRecord.created_at.between(
-                datetime(target.year, target.month, target.day),
-                datetime(target.year, target.month, target.day, 23, 59, 59),
-            )
+            CnMacroRecord.created_at.between(_cn_start, _cn_end)
         ).group_by(CnMacroRecord.indicator).all()
         cn_detail = ", ".join(f"{i[0]}({i[1]})" for i in indicators)
     sections.append({
@@ -246,7 +255,7 @@ def get_collection_report_range(
 
     用于前端看板展示，默认返回过去7天。
     """
-    end_date = end or date.today()
+    end_date = end or datetime.now(ZoneInfo("Asia/Shanghai")).date()
     start_date = start or (end_date - timedelta(days=6))
 
     source_names = [t[0] for t in _TABLES]
