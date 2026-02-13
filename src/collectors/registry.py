@@ -392,9 +392,10 @@ class CollectorRegistry:
                 # For methods that need default arguments, wrap them
                 if method_name == "fetch_all_series":
                     from datetime import date, timedelta
+                    import asyncio
                     end = date.today()
                     start = end - timedelta(days=30)
-                    return lambda m=method, s=start, e=end: m(s, e)
+                    return lambda m=method, s=start, e=end: asyncio.run(m(s, e))
                 if method_name == "fetch_all_holdings_fundamentals":
                     from src.db.database import SessionLocal
                     from src.db.models import Holding, HoldingStatus, Watchlist
