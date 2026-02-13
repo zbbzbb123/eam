@@ -39,6 +39,9 @@ class Holding(Base):
     __tablename__ = "holdings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
     symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     market: Mapped[Market] = mapped_column(Enum(Market), nullable=False)
     tier: Mapped[Tier] = mapped_column(Enum(Tier), nullable=False, index=True)
@@ -117,6 +120,9 @@ class Watchlist(Base):
     __tablename__ = "watchlist"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
     symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     market: Mapped[Market] = mapped_column(Enum(Market), nullable=False)
     theme: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -127,7 +133,7 @@ class Watchlist(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint('symbol', 'market', name='uq_watchlist_symbol_market'),
+        UniqueConstraint('symbol', 'market', 'user_id', name='uq_watchlist_symbol_market_user'),
         {"mysql_charset": "utf8mb4"},
     )
 
@@ -183,6 +189,9 @@ class Signal(Base):
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
 
     signal_type: Mapped[SignalType] = mapped_column(Enum(SignalType), nullable=False, index=True)
     sector: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)

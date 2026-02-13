@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from src.db.database import get_db
 from src.db.models_market_data import GeneratedReport
+from src.db.models_auth import User
+from src.services.auth import get_current_user
 from src.services.weekly_report import ReportService
 from src.api.schemas import (
     WeeklyReportResponse, PortfolioSummaryReportResponse,
@@ -69,21 +71,30 @@ def _report_to_response(report) -> WeeklyReportResponse:
 
 
 @router.get("/weekly", response_model=WeeklyReportResponse)
-def get_weekly_report(db: Session = Depends(get_db)):
+def get_weekly_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate weekly report as JSON."""
     report = _report_service.generate_report(db)
     return _report_to_response(report)
 
 
 @router.get("/weekly/text", response_class=PlainTextResponse)
-def get_weekly_report_text(db: Session = Depends(get_db)):
+def get_weekly_report_text(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate weekly report as plain text."""
     report = _report_service.generate_report(db)
     return _report_service.format_as_text(report)
 
 
 @router.get("/weekly/markdown", response_class=PlainTextResponse)
-def get_weekly_report_markdown(db: Session = Depends(get_db)):
+def get_weekly_report_markdown(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate weekly report as Markdown."""
     report = _report_service.generate_report(db)
     return _report_service.format_as_markdown(report)
@@ -161,21 +172,30 @@ def _enhanced_report_to_response(report) -> EnhancedReportResponse:
 # ===== Daily Report Endpoints =====
 
 @router.get("/daily", response_model=EnhancedReportResponse)
-def get_daily_report(db: Session = Depends(get_db)):
+def get_daily_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate daily brief report as JSON."""
     report = _report_service.generate_daily_report(db)
     return _enhanced_report_to_response(report)
 
 
 @router.get("/daily/text", response_class=PlainTextResponse)
-def get_daily_report_text(db: Session = Depends(get_db)):
+def get_daily_report_text(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate daily brief report as plain text."""
     report = _report_service.generate_daily_report(db)
     return _report_service.format_enhanced_as_text(report)
 
 
 @router.get("/daily/markdown", response_class=PlainTextResponse)
-def get_daily_report_markdown(db: Session = Depends(get_db)):
+def get_daily_report_markdown(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate daily brief report as Markdown."""
     report = _report_service.generate_daily_report(db)
     return _report_service.format_enhanced_as_markdown(report)
@@ -184,14 +204,20 @@ def get_daily_report_markdown(db: Session = Depends(get_db)):
 # ===== Enhanced Weekly Report Endpoints =====
 
 @router.get("/weekly/enhanced", response_model=EnhancedReportResponse)
-def get_enhanced_weekly_report(db: Session = Depends(get_db)):
+def get_enhanced_weekly_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate enhanced weekly report as JSON."""
     report = _report_service.generate_weekly_report(db)
     return _enhanced_report_to_response(report)
 
 
 @router.get("/weekly/enhanced/markdown", response_class=PlainTextResponse)
-def get_enhanced_weekly_report_markdown(db: Session = Depends(get_db)):
+def get_enhanced_weekly_report_markdown(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate enhanced weekly report as Markdown."""
     report = _report_service.generate_weekly_report(db)
     return _report_service.format_enhanced_as_markdown(report)
@@ -200,11 +226,19 @@ def get_enhanced_weekly_report_markdown(db: Session = Depends(get_db)):
 # ===== Pre-generated Report Endpoints =====
 
 @router.get("/daily/list", response_model=List[GeneratedReportListItem])
-def list_daily_reports(limit: int = 10, offset: int = 0, db: Session = Depends(get_db)):
+def list_daily_reports(
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """List generated daily reports, newest first."""
     reports = (
         db.query(GeneratedReport)
-        .filter(GeneratedReport.report_type == "daily")
+        .filter(
+            GeneratedReport.report_type == "daily",
+            GeneratedReport.user_id == current_user.id,
+        )
         .order_by(desc(GeneratedReport.generated_at))
         .offset(offset)
         .limit(limit)
@@ -214,20 +248,31 @@ def list_daily_reports(limit: int = 10, offset: int = 0, db: Session = Depends(g
 
 
 @router.post("/daily/generate")
-def trigger_daily_report(db: Session = Depends(get_db)):
+def trigger_daily_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Manually trigger daily report generation."""
     from src.services.report_generator import DailyReportGenerator
-    gen = DailyReportGenerator(db)
+    gen = DailyReportGenerator(db, user_id=current_user.id)
     report_id = gen.generate()
     return {"status": "ok", "report_id": report_id}
 
 
 @router.get("/daily/{report_id}", response_model=GeneratedReportDetail)
-def get_daily_report_detail(report_id: int, db: Session = Depends(get_db)):
+def get_daily_report_detail(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a single daily report by ID."""
     report = (
         db.query(GeneratedReport)
-        .filter(GeneratedReport.id == report_id, GeneratedReport.report_type == "daily")
+        .filter(
+            GeneratedReport.id == report_id,
+            GeneratedReport.report_type == "daily",
+            GeneratedReport.user_id == current_user.id,
+        )
         .first()
     )
     if not report:
@@ -236,11 +281,19 @@ def get_daily_report_detail(report_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/weekly/list", response_model=List[GeneratedReportListItem])
-def list_weekly_reports(limit: int = 10, offset: int = 0, db: Session = Depends(get_db)):
+def list_weekly_reports(
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """List generated weekly reports, newest first."""
     reports = (
         db.query(GeneratedReport)
-        .filter(GeneratedReport.report_type == "weekly")
+        .filter(
+            GeneratedReport.report_type == "weekly",
+            GeneratedReport.user_id == current_user.id,
+        )
         .order_by(desc(GeneratedReport.generated_at))
         .offset(offset)
         .limit(limit)
@@ -250,20 +303,31 @@ def list_weekly_reports(limit: int = 10, offset: int = 0, db: Session = Depends(
 
 
 @router.post("/weekly/generate")
-def trigger_weekly_report(db: Session = Depends(get_db)):
+def trigger_weekly_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Manually trigger weekly report generation."""
     from src.services.report_generator import WeeklyReportGenerator
-    gen = WeeklyReportGenerator(db)
+    gen = WeeklyReportGenerator(db, user_id=current_user.id)
     report_id = gen.generate()
     return {"status": "ok", "report_id": report_id}
 
 
 @router.get("/weekly/{report_id}", response_model=GeneratedReportDetail)
-def get_weekly_report_detail(report_id: int, db: Session = Depends(get_db)):
+def get_weekly_report_detail(
+    report_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a single weekly report by ID."""
     report = (
         db.query(GeneratedReport)
-        .filter(GeneratedReport.id == report_id, GeneratedReport.report_type == "weekly")
+        .filter(
+            GeneratedReport.id == report_id,
+            GeneratedReport.report_type == "weekly",
+            GeneratedReport.user_id == current_user.id,
+        )
         .first()
     )
     if not report:

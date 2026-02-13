@@ -142,20 +142,22 @@ class AIAdvisor:
 
         return _parse_analysis_response(raw, holding.symbol, model)
 
-    async def analyze_all_holdings(self, db: Session) -> List[HoldingAnalysis]:
+    async def analyze_all_holdings(
+        self, db: Session, user_id: Optional[int] = None
+    ) -> List[HoldingAnalysis]:
         """Analyze all active holdings using the FAST model for cost efficiency.
 
         Args:
             db: Database session.
+            user_id: If provided, only analyze holdings belonging to this user.
 
         Returns:
             List of HoldingAnalysis for each active holding.
         """
-        holdings = (
-            db.query(Holding)
-            .filter(Holding.status == HoldingStatus.ACTIVE)
-            .all()
-        )
+        query = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if user_id is not None:
+            query = query.filter(Holding.user_id == user_id)
+        holdings = query.all()
 
         results: List[HoldingAnalysis] = []
         for holding in holdings:
@@ -178,16 +180,19 @@ class AIAdvisor:
 
         return results
 
-    async def generate_portfolio_advice(self, db: Session) -> str:
+    async def generate_portfolio_advice(
+        self, db: Session, user_id: Optional[int] = None
+    ) -> str:
         """Generate a summary portfolio advice in Chinese.
 
         Args:
             db: Database session.
+            user_id: If provided, only analyze holdings belonging to this user.
 
         Returns:
             A formatted Chinese-language portfolio advice string.
         """
-        analyses = await self.analyze_all_holdings(db)
+        analyses = await self.analyze_all_holdings(db, user_id=user_id)
 
         if not analyses:
             return "当前没有活跃持仓需要分析。"

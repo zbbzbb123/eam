@@ -57,8 +57,8 @@ def _is_cn_etf(symbol: str) -> bool:
 class PortfolioHealthAnalyzer(ReportAnalyzer):
     """Produces a comprehensive portfolio health report."""
 
-    def __init__(self, db: Session):
-        super().__init__(db)
+    def __init__(self, db: Session, user_id: Optional[int] = None):
+        super().__init__(db, user_id=user_id)
 
     @property
     def name(self) -> str:
@@ -145,11 +145,10 @@ class PortfolioHealthAnalyzer(ReportAnalyzer):
     # ------------------------------------------------------------------
 
     def analyze(self) -> AnalysisReport:
-        holdings = (
-            self.db.query(Holding)
-            .filter(Holding.status == HoldingStatus.ACTIVE)
-            .all()
-        )
+        query = self.db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if self.user_id is not None:
+            query = query.filter(Holding.user_id == self.user_id)
+        holdings = query.all()
 
         if not holdings:
             return AnalysisReport(

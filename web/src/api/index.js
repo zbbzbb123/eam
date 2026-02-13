@@ -1,15 +1,67 @@
 import axios from 'axios'
+import { getToken, clearAuth } from '../stores/auth'
 
 const api = axios.create({
   baseURL: '/api',
   timeout: 10000,
 })
 
+// AI endpoints (longer timeout)
+const aiApi = axios.create({ baseURL: '/api', timeout: 120000 })
+
+// Attach Authorization header to both instances
+function attachAuth(config) {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+}
+
+api.interceptors.request.use(attachAuth)
+aiApi.interceptors.request.use(attachAuth)
+
+// Handle 401 → clear auth and redirect to /login
+function handle401(error) {
+  if (error.response?.status === 401) {
+    clearAuth()
+    if (window.location.pathname !== '/login') {
+      window.location.href = '/login'
+    }
+  }
+  return Promise.reject(error)
+}
+
+api.interceptors.response.use(r => r, handle401)
+aiApi.interceptors.response.use(r => r, handle401)
+
 // Graceful error handling - return default data when backend is unavailable
 function safe(promise, fallback) {
   return promise.then(r => r.data).catch(() => fallback)
 }
 
+// === Auth API ===
+export function login(username, password) {
+  return api.post('/auth/login', { username, password }).then(r => r.data)
+}
+
+export function register(username, password, invitation_code) {
+  return api.post('/auth/register', { username, password, invitation_code }).then(r => r.data)
+}
+
+export function getMe() {
+  return api.get('/auth/me').then(r => r.data)
+}
+
+export function createInvitationCodes(count, note) {
+  return api.post('/auth/invitation-codes', { count, note }).then(r => r.data)
+}
+
+export function getInvitationCodes() {
+  return safe(api.get('/auth/invitation-codes'), [])
+}
+
+// === Portfolio & Holdings ===
 export function getPortfolioSummary() {
   return safe(api.get('/portfolio/summary'), {
     total_value: 0,
@@ -65,9 +117,7 @@ export function runAnalyzer(id) {
   return api.post(`/analyzers/${id}/run`).then(r => r.data).catch(() => null)
 }
 
-// AI endpoints (longer timeout)
-const aiApi = axios.create({ baseURL: '/api', timeout: 120000 })
-
+// === AI endpoints ===
 export function analyzeHolding(holdingId, quality = true) {
   return aiApi.post(`/ai/analyze-holding/${holdingId}`, null, { params: { quality } }).then(r => r.data).catch(() => null)
 }
@@ -88,7 +138,7 @@ export function classifyTier(symbol, market) {
   return aiApi.post('/ai/classify-tier', { symbol, market }).then(r => r.data).catch(() => ({ tier: 'medium' }))
 }
 
-// Pre-generated report endpoints
+// === Pre-generated report endpoints ===
 export function getDailyReportList(limit = 10) {
   return safe(api.get('/reports/daily/list', { params: { limit } }), [])
 }
@@ -108,7 +158,7 @@ export function triggerWeeklyReport() {
   return safe(aiApi.post('/reports/weekly/generate'), null)
 }
 
-// Collection report
+// === Collection report ===
 export function getCollectionReportRange(params = {}) {
   return safe(api.get('/collection-report/range', { params }), { source_names: [], days: [] })
 }

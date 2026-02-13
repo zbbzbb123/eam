@@ -49,8 +49,8 @@ LOOKBACK_DAYS = 30
 class WatchlistAnalyzer(ReportAnalyzer):
     """分析观察列表中的标的，评估估值、成长性和机会信号。"""
 
-    def __init__(self, db: Session):
-        super().__init__(db)
+    def __init__(self, db: Session, user_id: Optional[int] = None):
+        super().__init__(db, user_id=user_id)
         self._signals: List[AnalyzerResult] = []
 
     @property
@@ -65,7 +65,10 @@ class WatchlistAnalyzer(ReportAnalyzer):
         """运行分析并返回结构化报告。"""
         self._signals = []
 
-        watchlist_items = self.db.query(Watchlist).all()
+        query = self.db.query(Watchlist)
+        if self.user_id is not None:
+            query = query.filter(Watchlist.user_id == self.user_id)
+        watchlist_items = query.all()
         if not watchlist_items:
             return AnalysisReport(
                 section_name=self.name,

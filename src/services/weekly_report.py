@@ -143,7 +143,7 @@ class ReportService:
     # New enhanced report methods
     # ------------------------------------------------------------------
 
-    def generate_daily_report(self, db: Session) -> EnhancedReport:
+    def generate_daily_report(self, db: Session, user_id: Optional[int] = None) -> EnhancedReport:
         """Daily brief: MarketEnvironment + CapitalFlow + Commodity + short LLM summary."""
         # Lazy imports to avoid circular dependencies
         from src.analyzers.market_environment import MarketEnvironmentAnalyzer
@@ -168,7 +168,7 @@ class ReportService:
             ai_advice=ai_advice,
         )
 
-    def generate_weekly_report(self, db: Session) -> EnhancedReport:
+    def generate_weekly_report(self, db: Session, user_id: Optional[int] = None) -> EnhancedReport:
         """Full weekly: all 5 analyzers + portfolio legacy data + full LLM advice."""
         # Lazy imports to avoid circular dependencies
         from src.analyzers.market_environment import MarketEnvironmentAnalyzer
@@ -180,25 +180,31 @@ class ReportService:
         all_analyzers = [
             MarketEnvironmentAnalyzer(db),
             CapitalFlowAnalyzer(db),
-            PortfolioHealthAnalyzer(db),
+            PortfolioHealthAnalyzer(db, user_id=user_id),
             CommodityAnalyzer(db),
-            WatchlistAnalyzer(db),
+            WatchlistAnalyzer(db, user_id=user_id),
         ]
 
         sections = self._run_analyzers(all_analyzers)
 
         # Build legacy data for backward compatibility
-        portfolio_summary = self._build_portfolio_summary(db)
-        signal_summary = self._build_signal_summary(db)
-        risk_alerts = self._build_risk_alerts(db)
+        portfolio_summary = self._build_portfolio_summary(db, user_id=user_id)
+        signal_summary = self._build_signal_summary(db, user_id=user_id)
+        risk_alerts = self._build_risk_alerts(db, user_id=user_id)
 
-        holdings = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE).all()
+        holdings_query = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if user_id is not None:
+            holdings_query = holdings_query.filter(Holding.user_id == user_id)
+        holdings = holdings_query.all()
         week_ago = datetime.now() - timedelta(days=7)
-        critical_signals = db.query(Signal).filter(
+        signals_query = db.query(Signal).filter(
             Signal.severity == SignalSeverity.CRITICAL,
             Signal.status == SignalStatus.ACTIVE,
             Signal.created_at >= week_ago,
-        ).all()
+        )
+        if user_id is not None:
+            signals_query = signals_query.filter(Signal.user_id == user_id)
+        critical_signals = signals_query.all()
         action_items = self._build_action_items(
             db, holdings=holdings, critical_signals=critical_signals,
         )
@@ -221,20 +227,26 @@ class ReportService:
     # Legacy report method (backward compatible)
     # ------------------------------------------------------------------
 
-    def generate_report(self, db: Session) -> WeeklyReport:
+    def generate_report(self, db: Session, user_id: Optional[int] = None) -> WeeklyReport:
         """Generate a full weekly report (legacy format)."""
-        portfolio_summary = self._build_portfolio_summary(db)
-        signal_summary = self._build_signal_summary(db)
-        risk_alerts = self._build_risk_alerts(db)
+        portfolio_summary = self._build_portfolio_summary(db, user_id=user_id)
+        signal_summary = self._build_signal_summary(db, user_id=user_id)
+        risk_alerts = self._build_risk_alerts(db, user_id=user_id)
 
         # Gather info for action items
-        holdings = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE).all()
+        holdings_query = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if user_id is not None:
+            holdings_query = holdings_query.filter(Holding.user_id == user_id)
+        holdings = holdings_query.all()
         week_ago = datetime.now() - timedelta(days=7)
-        critical_signals = db.query(Signal).filter(
+        signals_query = db.query(Signal).filter(
             Signal.severity == SignalSeverity.CRITICAL,
             Signal.status == SignalStatus.ACTIVE,
             Signal.created_at >= week_ago,
-        ).all()
+        )
+        if user_id is not None:
+            signals_query = signals_query.filter(Signal.user_id == user_id)
+        critical_signals = signals_query.all()
 
         action_items = self._build_action_items(
             db, holdings=holdings, critical_signals=critical_signals
@@ -364,9 +376,12 @@ class ReportService:
         price = quote.close if quote and quote.close else holding.avg_cost
         return holding.quantity * price
 
-    def _build_portfolio_summary(self, db: Session) -> PortfolioSummary:
+    def _build_portfolio_summary(self, db: Session, user_id: Optional[int] = None) -> PortfolioSummary:
         """Build three-tier portfolio allocation summary."""
-        holdings = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE).all()
+        query = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if user_id is not None:
+            query = query.filter(Holding.user_id == user_id)
+        holdings = query.all()
 
         if not holdings:
             return PortfolioSummary(
@@ -411,10 +426,13 @@ class ReportService:
             tiers=list(tier_data.values()),
         )
 
-    def _build_signal_summary(self, db: Session) -> List[SignalSummaryItem]:
+    def _build_signal_summary(self, db: Session, user_id: Optional[int] = None) -> List[SignalSummaryItem]:
         """Build weekly signal summary grouped by sector."""
         week_ago = datetime.now() - timedelta(days=7)
-        signals = db.query(Signal).filter(Signal.created_at >= week_ago).all()
+        query = db.query(Signal).filter(Signal.created_at >= week_ago)
+        if user_id is not None:
+            query = query.filter(Signal.user_id == user_id)
+        signals = query.all()
 
         if not signals:
             return []
@@ -437,9 +455,12 @@ class ReportService:
 
         return result
 
-    def _build_risk_alerts(self, db: Session) -> List[RiskAlert]:
+    def _build_risk_alerts(self, db: Session, user_id: Optional[int] = None) -> List[RiskAlert]:
         """Build risk alerts for current portfolio."""
-        holdings = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE).all()
+        query = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if user_id is not None:
+            query = query.filter(Holding.user_id == user_id)
+        holdings = query.all()
 
         if not holdings:
             return []

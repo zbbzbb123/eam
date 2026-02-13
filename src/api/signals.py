@@ -8,6 +8,8 @@ from sqlalchemy import select
 
 from src.db.database import get_db
 from src.db.models import Signal, SignalType, SignalSeverity, SignalStatus
+from src.db.models_auth import User
+from src.services.auth import get_current_user
 from src.api.schemas import (
     SignalCreate, SignalResponse, SignalUpdate,
     SignalTypeEnum, SignalSeverityEnum, SignalStatusEnum
@@ -26,7 +28,11 @@ SEVERITY_ORDER = {
 
 
 @router.post("", response_model=SignalResponse, status_code=status.HTTP_201_CREATED)
-def create_signal(signal: SignalCreate, db: Session = Depends(get_db)):
+def create_signal(
+    signal: SignalCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Create a new signal."""
     db_signal = Signal(
         signal_type=SignalType[signal.signal_type.value.upper()],
@@ -39,6 +45,7 @@ def create_signal(signal: SignalCreate, db: Session = Depends(get_db)):
         related_symbols=signal.related_symbols,
         holding_id=signal.holding_id,
         expires_at=signal.expires_at,
+        user_id=current_user.id,
     )
     db.add(db_signal)
     db.commit()
@@ -54,9 +61,10 @@ def list_signals(
     status: Optional[SignalStatusEnum] = Query(None, alias="status"),
     limit: int = Query(50, le=200),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List signals with optional filters."""
-    query = select(Signal)
+    query = select(Signal).where(Signal.user_id == current_user.id)
 
     if signal_type:
         query = query.where(Signal.signal_type == SignalType[signal_type.value.upper()])
@@ -76,10 +84,14 @@ def list_signals(
 
 
 @router.get("/{signal_id}", response_model=SignalResponse)
-def get_signal(signal_id: int, db: Session = Depends(get_db)):
+def get_signal(
+    signal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a specific signal by ID."""
     signal = db.get(Signal, signal_id)
-    if not signal:
+    if not signal or signal.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Signal {signal_id} not found"
@@ -92,10 +104,11 @@ def update_signal(
     signal_id: int,
     update: SignalUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Update a signal (mainly for status changes)."""
     signal = db.get(Signal, signal_id)
-    if not signal:
+    if not signal or signal.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Signal {signal_id} not found"
@@ -110,10 +123,14 @@ def update_signal(
 
 
 @router.post("/{signal_id}/mark-read", response_model=SignalResponse)
-def mark_signal_read(signal_id: int, db: Session = Depends(get_db)):
+def mark_signal_read(
+    signal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Mark a signal as read."""
     signal = db.get(Signal, signal_id)
-    if not signal:
+    if not signal or signal.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Signal {signal_id} not found"
@@ -126,10 +143,14 @@ def mark_signal_read(signal_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{signal_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_signal(signal_id: int, db: Session = Depends(get_db)):
+def delete_signal(
+    signal_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Delete a signal."""
     signal = db.get(Signal, signal_id)
-    if not signal:
+    if not signal or signal.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Signal {signal_id} not found"

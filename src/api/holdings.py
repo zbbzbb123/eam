@@ -8,6 +8,8 @@ from sqlalchemy import select
 
 from src.db.database import get_db
 from src.db.models import Holding, Transaction, Market, Tier, HoldingStatus, TransactionAction
+from src.db.models_auth import User
+from src.services.auth import get_current_user
 from src.api.schemas import (
     HoldingCreate, HoldingUpdate, HoldingResponse,
     TransactionCreate, TransactionResponse,
@@ -28,7 +30,11 @@ def _map_tier(tier: TierEnum) -> Tier:
 
 
 @router.post("", response_model=HoldingResponse, status_code=status.HTTP_201_CREATED)
-def create_holding(holding: HoldingCreate, db: Session = Depends(get_db)):
+def create_holding(
+    holding: HoldingCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Create a new holding."""
     db_holding = Holding(
         symbol=holding.symbol.upper(),
@@ -42,6 +48,7 @@ def create_holding(holding: HoldingCreate, db: Session = Depends(get_db)):
         take_profit_price=holding.take_profit_price,
         custom_keywords=holding.custom_keywords,
         notes=holding.notes,
+        user_id=current_user.id,
     )
     db.add(db_holding)
     db.commit()
@@ -54,9 +61,10 @@ def list_holdings(
     tier: Optional[TierEnum] = None,
     status: Optional[HoldingStatusEnum] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List all holdings with optional filters."""
-    query = select(Holding)
+    query = select(Holding).where(Holding.user_id == current_user.id)
 
     if tier:
         query = query.where(Holding.tier == _map_tier(tier))
@@ -70,10 +78,14 @@ def list_holdings(
 
 
 @router.get("/{holding_id}", response_model=HoldingResponse)
-def get_holding(holding_id: int, db: Session = Depends(get_db)):
+def get_holding(
+    holding_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a specific holding by ID."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Holding {holding_id} not found"
@@ -86,10 +98,11 @@ def update_holding(
     holding_id: int,
     update: HoldingUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Update a holding."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Holding {holding_id} not found"
@@ -110,10 +123,14 @@ def update_holding(
 
 
 @router.delete("/{holding_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_holding(holding_id: int, db: Session = Depends(get_db)):
+def delete_holding(
+    holding_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Delete a holding."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Holding {holding_id} not found"
@@ -130,10 +147,11 @@ def create_transaction(
     holding_id: int,
     transaction: TransactionCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new transaction for a holding."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Holding {holding_id} not found"
@@ -177,10 +195,14 @@ def create_transaction(
 
 
 @router.get("/{holding_id}/transactions", response_model=List[TransactionResponse])
-def list_transactions(holding_id: int, db: Session = Depends(get_db)):
+def list_transactions(
+    holding_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """List all transactions for a holding."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Holding {holding_id} not found"

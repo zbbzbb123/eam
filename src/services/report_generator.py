@@ -308,10 +308,13 @@ def _detect_opportunity(
 
 
 def _scan_opportunities_static(
-    db: Session, llm: LLMClient
+    db: Session, llm: LLMClient, user_id: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """Scan watchlist items for investment opportunities."""
-    watchlist_items = db.query(Watchlist).all()
+    query = db.query(Watchlist)
+    if user_id is not None:
+        query = query.filter(Watchlist.user_id == user_id)
+    watchlist_items = query.all()
     if not watchlist_items:
         return []
 
@@ -1029,8 +1032,9 @@ def _get_commodity_data_static(db: Session) -> List[Dict[str, Any]]:
 class DailyReportGenerator:
     """Generates pre-stored daily reports with per-holding AI commentary."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[int] = None):
         self.db = db
+        self.user_id = user_id
         self._llm = LLMClient()
         self._usd_cny: Optional[Decimal] = None
 
@@ -1052,7 +1056,7 @@ class DailyReportGenerator:
         self._enrich_with_ai(holdings_data, total_value_cny)
 
         # 5. Scan opportunities (watchlist + related sectors)
-        opportunities = _scan_opportunities_static(self.db, self._llm)
+        opportunities = _scan_opportunities_static(self.db, self._llm, user_id=self.user_id)
 
         # 6. Generate portfolio summary with AI
         today_pnl = sum(h.get("today_pnl", 0) for h in holdings_data)
@@ -1083,6 +1087,7 @@ class DailyReportGenerator:
             generated_at=now,
             summary=ai_summary,
             content=content,
+            user_id=self.user_id,
         )
         self.db.add(report)
         self.db.commit()
@@ -1100,11 +1105,10 @@ class DailyReportGenerator:
         Returns:
             (holdings_list, total_value_cny, cash_pct)
         """
-        holdings = (
-            self.db.query(Holding)
-            .filter(Holding.status == HoldingStatus.ACTIVE)
-            .all()
-        )
+        query = self.db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if self.user_id is not None:
+            query = query.filter(Holding.user_id == self.user_id)
+        holdings = query.all()
 
         holdings_data: List[Dict[str, Any]] = []
         total_value_cny = Decimal("0")
@@ -1424,8 +1428,9 @@ class DailyReportGenerator:
 class WeeklyReportGenerator:
     """Generates pre-stored weekly reports with macro context and strategic analysis."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[int] = None):
         self.db = db
+        self.user_id = user_id
         self._llm = LLMClient()
         self._usd_cny: Optional[Decimal] = None
 
@@ -1447,10 +1452,12 @@ class WeeklyReportGenerator:
         holdings = self._build_holdings_review(week_start)
 
         # 4. Opportunities (reuse shared helper)
-        opportunities = _scan_opportunities_static(self.db, self._llm)
+        opportunities = _scan_opportunities_static(self.db, self._llm, user_id=self.user_id)
 
         # 5. Risk alerts (from PortfolioHealthAnalyzer)
         risk_alerts = self._build_risk_alerts()
+
+
 
         # 6. Next week events (placeholder)
         next_week_events: List[Dict[str, Any]] = []
@@ -1481,6 +1488,7 @@ class WeeklyReportGenerator:
             generated_at=now,
             summary=summary_text,
             content=content,
+            user_id=self.user_id,
         )
         self.db.add(report)
         self.db.commit()
@@ -1494,11 +1502,10 @@ class WeeklyReportGenerator:
 
     def _build_week_summary(self, week_start: date, week_end: date) -> Dict[str, Any]:
         """Build the week_summary section with P&L and best/worst holdings."""
-        holdings = (
-            self.db.query(Holding)
-            .filter(Holding.status == HoldingStatus.ACTIVE)
-            .all()
-        )
+        query = self.db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if self.user_id is not None:
+            query = query.filter(Holding.user_id == self.user_id)
+        holdings = query.all()
 
         total_week_pnl_cny = Decimal("0")
         total_current_value_cny = Decimal("0")
@@ -1694,17 +1701,17 @@ class WeeklyReportGenerator:
 
     def _get_key_events(self, week_start: date, week_end: date) -> List[str]:
         """Extract titles of HIGH/CRITICAL signals from the current week."""
-        signals = (
+        query = (
             self.db.query(Signal)
             .filter(
                 Signal.severity.in_([SignalSeverity.HIGH, SignalSeverity.CRITICAL]),
                 Signal.created_at >= datetime.combine(week_start, datetime.min.time()),
                 Signal.created_at <= datetime.combine(week_end, datetime.max.time()),
             )
-            .order_by(desc(Signal.created_at))
-            .limit(10)
-            .all()
         )
+        if self.user_id is not None:
+            query = query.filter(Signal.user_id == self.user_id)
+        signals = query.order_by(desc(Signal.created_at)).limit(10).all()
         return [s.title for s in signals]
 
     # ------------------------------------------------------------------
@@ -1713,11 +1720,10 @@ class WeeklyReportGenerator:
 
     def _build_holdings_review(self, week_start: date) -> List[Dict[str, Any]]:
         """Build holdings review with weekly change and medium-term AI commentary."""
-        holdings = (
-            self.db.query(Holding)
-            .filter(Holding.status == HoldingStatus.ACTIVE)
-            .all()
-        )
+        query = self.db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE)
+        if self.user_id is not None:
+            query = query.filter(Holding.user_id == self.user_id)
+        holdings = query.all()
 
         # First pass: compute total value for weight calculation
         total_value_cny = Decimal("0")
@@ -1993,7 +1999,7 @@ class WeeklyReportGenerator:
         """Build risk alerts from PortfolioHealthAnalyzer."""
         from src.analyzers.portfolio_health import PortfolioHealthAnalyzer
 
-        analyzer = PortfolioHealthAnalyzer(self.db)
+        analyzer = PortfolioHealthAnalyzer(self.db, user_id=self.user_id)
         report = analyzer.analyze()
 
         alerts: List[Dict[str, Any]] = []

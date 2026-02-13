@@ -3,7 +3,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import String, DECIMAL, Integer, DateTime, Date, Text, Index, UniqueConstraint
+from sqlalchemy import String, DECIMAL, Integer, DateTime, Date, Text, Index, UniqueConstraint, ForeignKey
 from sqlalchemy.dialects.mysql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -269,6 +269,9 @@ class GeneratedReport(Base):
     __tablename__ = "generated_report"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
     report_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # "daily" or "weekly"
     report_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

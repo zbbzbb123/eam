@@ -240,15 +240,22 @@ def _collect_macro_data() -> None:
 
 
 def _run_analyzers() -> None:
-    """Run all registered analyzers."""
+    """Run all registered analyzers for each active user."""
     logger.info("Running scheduled analyzers")
     try:
         from src.db.database import SessionLocal
         from src.services.analyzer_runner import AnalyzerRunner
+        from src.db.models_auth import User
         db = SessionLocal()
         try:
-            runner = AnalyzerRunner(db=db)
-            runner.run_all()
+            users = db.query(User).filter(User.is_active == True).all()
+            for user in users:
+                try:
+                    runner = AnalyzerRunner(db=db, user_id=user.id)
+                    runner.run_all()
+                    logger.info(f"Analyzers completed for user {user.username}")
+                except Exception as e:
+                    logger.error(f"Analyzer run failed for user {user.username}: {e}")
         finally:
             db.close()
     except Exception as e:
@@ -298,16 +305,22 @@ def _generate_weekly_report() -> None:
 
 
 def _generate_daily_report_new() -> None:
-    """Generate pre-stored daily report with per-holding AI commentary."""
+    """Generate pre-stored daily report with per-holding AI commentary for all active users."""
     logger.info("Running scheduled daily report generation (new)")
     try:
         from src.services.report_generator import DailyReportGenerator
         from src.db.database import SessionLocal
+        from src.db.models_auth import User
         db = SessionLocal()
         try:
-            gen = DailyReportGenerator(db)
-            report_id = gen.generate()
-            logger.info(f"Daily report generated, id={report_id}")
+            users = db.query(User).filter(User.is_active == True).all()
+            for user in users:
+                try:
+                    gen = DailyReportGenerator(db, user_id=user.id)
+                    report_id = gen.generate()
+                    logger.info(f"Daily report generated for user {user.username}, id={report_id}")
+                except Exception as e:
+                    logger.error(f"Daily report generation failed for user {user.username}: {e}")
         finally:
             db.close()
     except Exception as e:
@@ -425,16 +438,22 @@ def _collect_market_data_am() -> None:
 
 
 def _generate_weekly_report_new() -> None:
-    """Generate pre-stored weekly report with strategic analysis."""
+    """Generate pre-stored weekly report with strategic analysis for all active users."""
     logger.info("Running scheduled weekly report generation (new)")
     try:
         from src.services.report_generator import WeeklyReportGenerator
         from src.db.database import SessionLocal
+        from src.db.models_auth import User
         db = SessionLocal()
         try:
-            gen = WeeklyReportGenerator(db)
-            report_id = gen.generate()
-            logger.info(f"Weekly report generated, id={report_id}")
+            users = db.query(User).filter(User.is_active == True).all()
+            for user in users:
+                try:
+                    gen = WeeklyReportGenerator(db, user_id=user.id)
+                    report_id = gen.generate()
+                    logger.info(f"Weekly report generated for user {user.username}, id={report_id}")
+                except Exception as e:
+                    logger.error(f"Weekly report generation failed for user {user.username}: {e}")
         finally:
             db.close()
     except Exception as e:

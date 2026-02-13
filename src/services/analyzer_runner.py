@@ -19,16 +19,18 @@ class AnalyzerRunner:
     Manages analyzer registration, execution, and signal persistence.
     """
 
-    def __init__(self, db: Session, telegram_service: Optional[TelegramService] = None):
+    def __init__(self, db: Session, telegram_service: Optional[TelegramService] = None, user_id: Optional[int] = None):
         """
         Initialize the analyzer runner.
 
         Args:
             db: Database session for persisting signals.
             telegram_service: Optional Telegram service for notifications.
+            user_id: Optional user ID for scoping signals to a specific user.
         """
         self._db = db
         self._telegram = telegram_service
+        self._user_id = user_id
         self._analyzers: List[BaseAnalyzer] = []
 
     def register_analyzer(self, analyzer: BaseAnalyzer) -> None:
@@ -89,6 +91,7 @@ class AnalyzerRunner:
             data=result.data,
             related_symbols=result.related_symbols,
             expires_at=result.expires_at,
+            user_id=self._user_id,
         )
 
         self._db.add(signal)

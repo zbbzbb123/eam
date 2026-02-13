@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://test-anas.feihua100.com/gw/v1"
     llm_api_key: str = ""
 
+    # Auth
+    jwt_secret_key: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 10080  # 7 days
+    admin_username: str = "admin"
+    admin_password: str = "admin123"
+
     # Telegram
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

@@ -10,6 +10,8 @@ from sqlalchemy import select
 
 from src.db.database import get_db
 from src.db.models import Holding, Signal, HoldingStatus
+from src.db.models_auth import User
+from src.services.auth import get_current_user
 from src.services.ai_advisor import AIAdvisor
 from src.services.ai_summarizer import AISummarizer
 from src.services.llm_client import LLMClient, LLMError, ModelChoice
@@ -40,10 +42,11 @@ async def analyze_holding(
     holding_id: int,
     quality: bool = True,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Analyze a single holding with AI."""
     holding = db.get(Holding, holding_id)
-    if not holding:
+    if not holding or holding.user_id != current_user.id:
         raise HTTPException(status_code=404, detail=f"Holding {holding_id} not found")
 
     # Get recent signals related to this holding
@@ -64,20 +67,26 @@ async def analyze_holding(
 
 
 @router.post("/analyze-all")
-async def analyze_all(db: Session = Depends(get_db)):
+async def analyze_all(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Analyze all active holdings with AI (uses fast model)."""
     try:
-        analyses = await _advisor.analyze_all_holdings(db)
+        analyses = await _advisor.analyze_all_holdings(db, user_id=current_user.id)
         return [dataclasses.asdict(a) for a in analyses]
     except (LLMError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"AI analysis failed: {e}")
 
 
 @router.post("/portfolio-advice")
-async def portfolio_advice(db: Session = Depends(get_db)):
+async def portfolio_advice(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate portfolio-level AI advice."""
     try:
-        advice = await _advisor.generate_portfolio_advice(db)
+        advice = await _advisor.generate_portfolio_advice(db, user_id=current_user.id)
         return {"advice": advice}
     except (LLMError, ValueError) as e:
         raise HTTPException(status_code=500, detail=f"AI advice failed: {e}")
@@ -96,7 +105,10 @@ async def summarize(request: SummarizeRequest):
 
 
 @router.post("/enhance-report")
-async def enhance_report(db: Session = Depends(get_db)):
+async def enhance_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Generate weekly report and enhance with AI commentary."""
     try:
         report = _report_service.generate_report(db)

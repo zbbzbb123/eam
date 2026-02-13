@@ -11,6 +11,8 @@ from sqlalchemy import select
 
 from src.db.database import get_db
 from src.db.models import Holding, Tier, HoldingStatus, DailyQuote, Market
+from src.db.models_auth import User
+from src.services.auth import get_current_user
 from src.api.schemas import (
     PortfolioOverview, TierAllocation, TierEnum,
     PortfolioSummaryResponse, TierSummaryResponse,
@@ -49,14 +51,20 @@ TARGET_ALLOCATIONS = {
 
 
 @router.get("/overview", response_model=PortfolioOverview)
-def get_portfolio_overview(db: Session = Depends(get_db)):
+def get_portfolio_overview(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Get portfolio overview with tier allocations.
     Uses avg_cost as price estimate for MVP (real implementation would fetch current prices).
     """
     # Get all active holdings
     holdings = db.execute(
-        select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == current_user.id,
+        )
     ).scalars().all()
 
     if not holdings:
@@ -125,12 +133,15 @@ def get_portfolio_overview(db: Session = Depends(get_db)):
 
 
 @router.get("/rebalance-suggestions")
-def get_rebalance_suggestions(db: Session = Depends(get_db)):
+def get_rebalance_suggestions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Get suggestions for rebalancing the portfolio.
     Only suggests rebalancing when drift exceeds 5%.
     """
-    overview = get_portfolio_overview(db)
+    overview = get_portfolio_overview(db=db, current_user=current_user)
 
     suggestions = []
     for allocation in overview.allocations:
@@ -172,10 +183,16 @@ def _get_current_price(holding: Holding, db: Session) -> Decimal:
 
 
 @router.get("/summary", response_model=PortfolioSummaryResponse)
-def get_portfolio_summary(db: Session = Depends(get_db)):
+def get_portfolio_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get portfolio summary with tier allocation details."""
     holdings = db.execute(
-        select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == current_user.id,
+        )
     ).scalars().all()
 
     if not holdings:
@@ -257,10 +274,16 @@ def _get_stock_names(holdings) -> dict:
 
 
 @router.get("/holdings-summary", response_model=List[HoldingSummaryResponse])
-def get_holdings_summary(db: Session = Depends(get_db)):
+def get_holdings_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get all active holdings with P&L information."""
     holdings = db.execute(
-        select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == current_user.id,
+        )
         .order_by(Holding.tier, Holding.symbol)
     ).scalars().all()
 
@@ -335,10 +358,16 @@ def _fetch_and_cache_price(symbol: str, market: Market):
 
 
 @router.post("/sync-prices")
-def sync_prices(db: Session = Depends(get_db)):
+def sync_prices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Fetch latest prices for all active holdings and store in daily_quotes. Uses 1-hour cache."""
     holdings = db.execute(
-        select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == current_user.id,
+        )
     ).scalars().all()
 
     if not holdings:

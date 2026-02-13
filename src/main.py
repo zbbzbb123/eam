@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.db.database import init_db
+from src.db.database import init_db, SessionLocal
+from src.api.auth import router as auth_router
 from src.api.holdings import router as holdings_router
 from src.api.quotes import router as quotes_router
 from src.api.portfolio import router as portfolio_router
@@ -21,6 +22,16 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
     # Startup
     init_db()
+
+    # Ensure admin user exists and migrate orphan data
+    from src.services.auth import ensure_admin_exists, assign_orphan_data_to_admin
+    db = SessionLocal()
+    try:
+        admin = ensure_admin_exists(db)
+        assign_orphan_data_to_admin(db, admin.id)
+    finally:
+        db.close()
+
     scheduler = get_scheduler_service()
     scheduler.start()
     scheduler.setup_default_jobs()
@@ -46,6 +57,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router, prefix="/api")
 app.include_router(holdings_router, prefix="/api")
 app.include_router(quotes_router, prefix="/api")
 app.include_router(portfolio_router, prefix="/api")

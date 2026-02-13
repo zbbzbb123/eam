@@ -76,8 +76,9 @@ class AnalysisReport:
 class ReportAnalyzer(ABC):
     """Base class for analyzers that produce report sections + optional signals."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[int] = None):
         self.db = db
+        self.user_id = user_id
 
     @property
     @abstractmethod
