@@ -18,7 +18,7 @@ dependencies = [
     "python-telegram-bot>=21.0",
     "tushare>=1.4.0",
     "PyJWT>=2.8.0",
-    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0.0",
 ]
 
 [project.optional-dependencies]
