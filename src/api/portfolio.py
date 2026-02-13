@@ -1,18 +1,42 @@
 """Portfolio API endpoints."""
+import logging
+import time
+from datetime import date
 from decimal import Decimal
-from typing import List
+from typing import List, Dict, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from src.db.database import get_db
-from src.db.models import Holding, Tier, HoldingStatus, DailyQuote
+from src.db.models import Holding, Tier, HoldingStatus, DailyQuote, Market
 from src.api.schemas import (
     PortfolioOverview, TierAllocation, TierEnum,
     PortfolioSummaryResponse, TierSummaryResponse,
     HoldingSummaryResponse,
 )
+
+logger = logging.getLogger(__name__)
+
+# Simple TTL cache: {key: (value, expire_timestamp)}
+_cache: Dict[str, Any] = {}
+CACHE_TTL = 3600  # 1 hour
+
+
+def _cache_get(key: str):
+    """Get value from cache if not expired."""
+    if key in _cache:
+        value, expire_at = _cache[key]
+        if time.time() < expire_at:
+            return value
+        del _cache[key]
+    return None
+
+
+def _cache_set(key: str, value):
+    """Set value in cache with TTL."""
+    _cache[key] = (value, time.time() + CACHE_TTL)
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -199,6 +223,39 @@ def get_portfolio_summary(db: Session = Depends(get_db)):
     )
 
 
+def _get_stock_names(holdings) -> dict:
+    """Batch fetch stock names with cache. Returns {symbol: name}."""
+    from src.collectors.sina_quote import fetch_sina_quote
+
+    names = {}
+    for h in holdings:
+        cache_key = f"name:{h.symbol}:{h.market.value}"
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            names[h.symbol] = cached
+            continue
+
+        name = ""
+        if h.market in (Market.CN, Market.HK):
+            try:
+                sq = fetch_sina_quote(h.symbol, h.market.value)
+                if sq and sq.name:
+                    name = sq.name
+            except Exception:
+                pass
+        elif h.market == Market.US:
+            try:
+                import yfinance as yf
+                info = yf.Ticker(h.symbol).info
+                name = info.get("shortName") or info.get("longName") or ""
+            except Exception:
+                pass
+
+        _cache_set(cache_key, name)
+        names[h.symbol] = name
+    return names
+
+
 @router.get("/holdings-summary", response_model=List[HoldingSummaryResponse])
 def get_holdings_summary(db: Session = Depends(get_db)):
     """Get all active holdings with P&L information."""
@@ -206,6 +263,9 @@ def get_holdings_summary(db: Session = Depends(get_db)):
         select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
         .order_by(Holding.tier, Holding.symbol)
     ).scalars().all()
+
+    # Batch fetch names
+    names = _get_stock_names(holdings)
 
     result = []
     for h in holdings:
@@ -218,6 +278,7 @@ def get_holdings_summary(db: Session = Depends(get_db)):
         result.append(HoldingSummaryResponse(
             id=h.id,
             symbol=h.symbol,
+            name=names.get(h.symbol, ""),
             market=h.market.value,
             tier=h.tier.value,
             quantity=h.quantity,
@@ -229,3 +290,109 @@ def get_holdings_summary(db: Session = Depends(get_db)):
         ))
 
     return result
+
+
+def _fetch_and_cache_price(symbol: str, market: Market):
+    """Fetch price from external API with 1-hour cache. Returns (close, open, high, low, volume, trade_date) or None."""
+    cache_key = f"price:{symbol}:{market.value}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    from src.collectors.structured.yfinance_collector import YFinanceCollector
+    from src.collectors.sina_quote import fetch_sina_quote
+
+    result = None
+    try:
+        if market == Market.US:
+            yf = YFinanceCollector()
+            quote = yf.fetch_latest_quote(symbol)
+            if quote and quote.close:
+                result = {
+                    "close": Decimal(str(quote.close)),
+                    "open": Decimal(str(quote.open)) if quote.open else None,
+                    "high": Decimal(str(quote.high)) if quote.high else None,
+                    "low": Decimal(str(quote.low)) if quote.low else None,
+                    "volume": quote.volume,
+                    "trade_date": quote.trade_date,
+                }
+        else:
+            sq = fetch_sina_quote(symbol, market.value)
+            if sq and sq.close:
+                result = {
+                    "close": sq.close,
+                    "open": sq.open,
+                    "high": sq.high,
+                    "low": sq.low,
+                    "volume": sq.volume,
+                    "trade_date": sq.trade_date,
+                }
+    except Exception as e:
+        logger.warning("Failed to fetch price for %s: %s", symbol, e)
+
+    _cache_set(cache_key, result)
+    return result
+
+
+@router.post("/sync-prices")
+def sync_prices(db: Session = Depends(get_db)):
+    """Fetch latest prices for all active holdings and store in daily_quotes. Uses 1-hour cache."""
+    holdings = db.execute(
+        select(Holding).where(Holding.status == HoldingStatus.ACTIVE)
+    ).scalars().all()
+
+    if not holdings:
+        return {"synced": 0, "errors": []}
+
+    synced = 0
+    errors = []
+
+    # Deduplicate symbols per market
+    seen = set()
+    unique_holdings = []
+    for h in holdings:
+        key = (h.symbol, h.market)
+        if key not in seen:
+            seen.add(key)
+            unique_holdings.append(h)
+
+    for h in unique_holdings:
+        try:
+            data = _fetch_and_cache_price(h.symbol, h.market)
+
+            if not data:
+                errors.append(f"{h.symbol}: no quote data")
+                continue
+
+            # Upsert into daily_quotes
+            existing = db.execute(
+                select(DailyQuote).where(
+                    DailyQuote.symbol == h.symbol,
+                    DailyQuote.market == h.market,
+                    DailyQuote.trade_date == data["trade_date"],
+                )
+            ).scalar_one_or_none()
+
+            if existing:
+                existing.close = data["close"]
+                existing.open = data["open"]
+                existing.high = data["high"]
+                existing.low = data["low"]
+                existing.volume = data["volume"]
+            else:
+                db.add(DailyQuote(
+                    symbol=h.symbol,
+                    market=h.market,
+                    trade_date=data["trade_date"],
+                    open=data["open"], high=data["high"], low=data["low"],
+                    close=data["close"], volume=data["volume"],
+                ))
+            db.flush()
+            synced += 1
+        except Exception as e:
+            db.rollback()
+            logger.warning("Failed to sync price for %s: %s", h.symbol, e)
+            errors.append(f"{h.symbol}: {str(e)}")
+
+    db.commit()
+    return {"synced": synced, "errors": errors}

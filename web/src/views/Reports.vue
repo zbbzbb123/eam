@@ -241,7 +241,9 @@ onMounted(() => loadList('daily'))
   flex-shrink: 0;
 }
 .report-item-content {
-  padding: 0 16px 16px;
+  padding: 16px;
   border-top: 1px solid var(--border);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 </style>

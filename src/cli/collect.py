@@ -234,7 +234,7 @@ Examples:
   python -m src.cli.collect --list
   python -m src.cli.collect --status
   python -m src.cli.collect --collector fred
-  python -m src.cli.collect --collector openinsider --json
+  python -m src.cli.collect --collector cn_macro --json
   python -m src.cli.collect --all
         """,
     )

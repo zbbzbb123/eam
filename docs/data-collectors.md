@@ -8,9 +8,9 @@
 
 | 分类 | 采集器数量 | 采集方式 |
 |------|-----------|---------|
-| 结构化 API | 8 | SDK/REST API |
-| 爬虫 | 3 | HTML/JSON 解析 |
-| **总计** | **11** | |
+| 结构化 API | 6 | SDK/REST API |
+| 爬虫 | 2 | HTML/JSON 解析 |
+| **总计** | **8** | |
 
 ---
 
@@ -147,73 +147,6 @@
 
 ---
 
-### 6. GitHubCollector (开源项目热度)
-
-| 属性 | 值 |
-|------|-----|
-| **名称** | github_collector |
-| **数据源** | GitHub REST API v3 |
-| **采集对象** | 开源项目指标 |
-| **采集频次** | 每日 / 每周 |
-| **采集方式** | REST API (httpx async) |
-| **需要认证** | 可选 (无认证 60 req/hour, 有认证 5000 req/hour) |
-| **速率限制** | 60 requests/hour (无认证) |
-| **API 地址** | https://api.github.com/repos/{owner}/{repo} |
-
-**默认跟踪项目:**
-- openai/openai-python
-- huggingface/transformers
-- pytorch/pytorch
-- langchain-ai/langchain
-- microsoft/vscode
-
-**数据字段 (GitHubRepoMetrics):**
-- owner, repo, full_name
-- stars: Star 数
-- forks: Fork 数
-- watchers: Watch 数
-- open_issues: 开放 Issue 数
-- language: 主要语言
-- created_at, updated_at
-- recent_commits: 近 4 周提交数
-
-**使用场景:** AI/科技行业热度追踪、另类数据
-
----
-
-### 7. HuggingFaceCollector (AI模型热度)
-
-| 属性 | 值 |
-|------|-----|
-| **名称** | huggingface_collector |
-| **数据源** | HuggingFace Hub API |
-| **采集对象** | AI 模型下载量和热度 |
-| **采集频次** | 每日 / 每周 |
-| **采集方式** | REST API (httpx async) |
-| **需要认证** | 否 |
-| **速率限制** | 无明确限制 |
-| **API 地址** | https://huggingface.co/api/models/{model_id} |
-
-**默认跟踪模型:**
-- meta-llama/Llama-2-7b
-- meta-llama/Llama-3.2-1B
-- mistralai/Mistral-7B-v0.1
-- stabilityai/stable-diffusion-xl-base-1.0
-- openai/whisper-large-v3
-
-**数据字段 (HuggingFaceModelMetrics):**
-- model_id: 模型标识
-- downloads: 下载量
-- likes: 点赞数
-- pipeline_tag: 任务类型
-- author: 作者/组织
-- last_modified: 最后更新时间
-- tags: 标签列表
-
-**使用场景:** AI 行业趋势追踪、热门模型监控
-
----
-
 ### 8. TuShareCollector (A股财务指标)
 
 | 属性 | 值 |
@@ -253,41 +186,6 @@
 ---
 
 ## 二、爬虫采集器
-
-### 9. OpenInsiderCrawler (美股内部交易)
-
-| 属性 | 值 |
-|------|-----|
-| **名称** | openinsider_crawler |
-| **数据源** | OpenInsider.com |
-| **采集对象** | 美股内部人交易 |
-| **采集频次** | 每日 |
-| **采集方式** | HTML 爬虫 (httpx + BeautifulSoup) |
-| **需要认证** | 否 |
-| **速率限制** | 建议间隔 1-2 秒 |
-| **目标 URL** | http://openinsider.com/screener |
-
-**数据字段 (InsiderTradeData):**
-- filing_date: SEC 申报日期
-- trade_date: 实际交易日期
-- ticker: 股票代码
-- company_name: 公司名称
-- insider_name: 内部人姓名
-- title: 职位 (CEO, CFO, Director 等)
-- trade_type: 交易类型 (P=买入, S=卖出)
-- price: 交易价格
-- quantity: 交易数量
-- owned_after: 交易后持有量
-- value: 交易金额
-
-**采集方法:**
-- `fetch_latest_purchases()`: 最新买入
-- `fetch_latest_sales()`: 最新卖出
-- `fetch_by_ticker(ticker)`: 按股票查询
-
-**使用场景:** 聪明钱追踪、高管信心指标
-
----
 
 ### 10. JisiluCrawler (A股ETF溢价)
 
@@ -375,7 +273,7 @@ python -m src.cli.collect --collector fred
 python -m src.cli.collect --all
 
 # JSON 格式输出
-python -m src.cli.collect --collector github --json
+python -m src.cli.collect --collector fred --json
 ```
 
 ### Python API
@@ -406,10 +304,7 @@ results = await registry.run_all()
 | FRED | 每日 | 宏观数据更新较慢 |
 | Northbound | 每日 16:00 后 | A股收盘后 |
 | SEC 13F | 每季度 | 季度披露 |
-| GitHub | 每周 | 变化较慢 |
-| HuggingFace | 每周 | 变化较慢 |
 | TuShare | 每日 (估值) / 每季 (财务) | |
-| OpenInsider | 每日 | 内部交易 |
 | Jisilu | 每日盘中 | ETF 溢价 |
 | Commodity | 每日 | 大宗商品 |
 
@@ -421,8 +316,6 @@ results = await registry.run_all()
 # .env 文件
 FRED_API_KEY=your_fred_api_key
 TUSHARE_TOKEN=your_tushare_token
-# GitHub Token (可选，提高 rate limit)
-# GITHUB_TOKEN=your_github_token
 ```
 
 ---
@@ -434,7 +327,6 @@ TUSHARE_TOKEN=your_tushare_token
 | MacroData | FREDCollector | 美国宏观指标 |
 | NorthboundFlow | NorthboundCollector | 北向资金每日流向 |
 | NorthboundHolding | NorthboundCollector | 北向持股明细 |
-| InsiderTrade | OpenInsiderCrawler | 内部交易记录 |
 | InstitutionalHolding | SEC13FCollector | 机构持仓 |
 
 ---
@@ -446,11 +338,8 @@ TUSHARE_TOKEN=your_tushare_token
 | FREDCollector | 16 | 完整 |
 | NorthboundCollector | 26 | 完整 |
 | SEC13FCollector | 27 | 完整 |
-| GitHubCollector | 26 | 完整 |
-| HuggingFaceCollector | 29 | 完整 |
 | TuShareCollector | 34 | 完整 |
-| OpenInsiderCrawler | 33 | 完整 |
 | JisiluCrawler | 30 | 完整 |
 | CommodityCrawler | 48 | 完整 |
 | Registry | 41 | 完整 |
-| **总计** | **310+** | |
+| **总计** | **222+** | |

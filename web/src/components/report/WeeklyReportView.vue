@@ -19,6 +19,7 @@ const props = defineProps({ content: { type: Object, required: true } })
         v-for="h in content.holdings"
         :key="h.symbol"
         :holding="h"
+        :is-weekly="true"
       />
     </div>
 
@@ -56,6 +57,10 @@ const props = defineProps({ content: { type: Object, required: true } })
 </template>
 
 <style scoped>
+.weekly-report {
+  max-width: 100%;
+  overflow: hidden;
+}
 .section-title {
   font-size: 16px;
   color: var(--text);

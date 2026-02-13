@@ -98,7 +98,7 @@ class CollectorRegistry:
             self.register(
                 NorthboundCollector,
                 name="northbound",
-                description="Northbound capital flow collector for A-shares via AkShare",
+                description="Northbound capital flow collector via TuShare moneyflow_hsgt API",
             )
         except ImportError as e:
             logger.warning(f"Could not import NorthboundCollector: {e}")
@@ -114,26 +114,6 @@ class CollectorRegistry:
             logger.warning(f"Could not import SEC13FCollector: {e}")
 
         try:
-            from src.collectors.structured.github_collector import GitHubCollector
-            self.register(
-                GitHubCollector,
-                name="github",
-                description="GitHub API collector for tracking open source project popularity",
-            )
-        except ImportError as e:
-            logger.warning(f"Could not import GitHubCollector: {e}")
-
-        try:
-            from src.collectors.structured.huggingface_collector import HuggingFaceCollector
-            self.register(
-                HuggingFaceCollector,
-                name="huggingface",
-                description="HuggingFace Hub API collector for tracking AI model download trends",
-            )
-        except ImportError as e:
-            logger.warning(f"Could not import HuggingFaceCollector: {e}")
-
-        try:
             from src.collectors.structured.tushare_collector import TuShareCollector
             self.register(
                 TuShareCollector,
@@ -144,16 +124,6 @@ class CollectorRegistry:
             logger.warning(f"Could not import TuShareCollector: {e}")
 
         # Crawlers
-        try:
-            from src.collectors.crawlers.openinsider_crawler import OpenInsiderCrawler
-            self.register(
-                OpenInsiderCrawler,
-                name="openinsider",
-                description="OpenInsider crawler for US insider trading data",
-            )
-        except ImportError as e:
-            logger.warning(f"Could not import OpenInsiderCrawler: {e}")
-
         try:
             from src.collectors.crawlers.jisilu_crawler import JisiluCrawler
             self.register(
@@ -174,6 +144,67 @@ class CollectorRegistry:
         except ImportError as e:
             logger.warning(f"Could not import CommodityCrawler: {e}")
 
+        # New collectors
+        try:
+            from src.collectors.structured.cn_macro_collector import CnMacroCollector
+            self.register(
+                CnMacroCollector,
+                name="cn_macro",
+                description="China macro data (PMI/CPI/M2) via eastmoney datacenter",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import CnMacroCollector: {e}")
+
+        try:
+            from src.collectors.structured.sector_collector import SectorCollector
+            self.register(
+                SectorCollector,
+                name="sector",
+                description="Industry and concept sector data via Sina Finance",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import SectorCollector: {e}")
+
+        try:
+            from src.collectors.structured.market_indicators_collector import MarketIndicatorsCollector
+            self.register(
+                MarketIndicatorsCollector,
+                name="market_indicators",
+                description="VIX, gold, silver, copper market indicators via YFinance",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import MarketIndicatorsCollector: {e}")
+
+        try:
+            from src.collectors.structured.fundamentals_collector import FundamentalsCollector
+            self.register(
+                FundamentalsCollector,
+                name="fundamentals",
+                description="Company fundamentals (PE/PB/revenue) via YFinance and TuShare",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import FundamentalsCollector: {e}")
+
+        try:
+            from src.collectors.structured.sector_flow_collector import SectorFlowCollector
+            self.register(
+                SectorFlowCollector,
+                name="sector_flow",
+                description="Sector fund flow data (主力资金) via EastMoney",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import SectorFlowCollector: {e}")
+
+        try:
+            from src.collectors.structured.market_breadth_collector import MarketBreadthCollector
+            self.register(
+                MarketBreadthCollector,
+                name="market_breadth",
+                description="A-share market breadth (advance/decline) via EastMoney",
+            )
+        except ImportError as e:
+            logger.warning(f"Could not import MarketBreadthCollector: {e}")
+
     def _detect_collector_type(self, collector_class: Type) -> CollectorType:
         """Detect if a collector is async or sync based on its methods.
 
@@ -192,10 +223,8 @@ class CollectorRegistry:
             "fetch_holdings",
             "fetch_latest_holdings",
             "fetch_all_tracked_holdings",
-            "fetch_repo_metrics",
-            "fetch_all_tracked_repos",
-            "fetch_model_metrics",
-            "fetch_all_tracked_models",
+            "fetch_all",
+            "fetch_pmi",
         ]
 
         for method_name in async_method_names:
@@ -349,14 +378,11 @@ class CollectorRegistry:
             # Async collectors
             "fetch_all_series",
             "fetch_all_tracked_holdings",
-            "fetch_all_tracked_repos",
-            "fetch_all_tracked_models",
             # Sync collectors
             "fetch_daily_net_flow",
             "fetch_etf_premium_data",
             "fetch_all_tracked_commodities",
             "fetch_all",
-            "fetch_latest_purchases",
         ]
 
         for method_name in method_names:

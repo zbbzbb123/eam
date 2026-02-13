@@ -15,6 +15,45 @@ logger = logging.getLogger(__name__)
 # Default lookback period for percentile calculation (1 year)
 DEFAULT_PERCENTILE_LOOKBACK_DAYS = 365
 
+# Major indices to track for valuation
+TRACKED_INDICES = {
+    "000001.SH": "上证指数",
+    "399001.SZ": "深证成指",
+    "399006.SZ": "创业板指",
+    "000016.SH": "上证50",
+    "000300.SH": "沪深300",
+    "000905.SH": "中证500",
+}
+
+
+@dataclass
+class IndexValuationData:
+    """Data class for index valuation metrics."""
+
+    ts_code: str
+    name: str
+    trade_date: date
+    pe: Optional[float] = None
+    pb: Optional[float] = None
+    total_mv: Optional[Decimal] = None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class FundNavData:
+    """Data class for fund NAV (net asset value)."""
+
+    ts_code: str
+    nav_date: date
+    unit_nav: Optional[float] = None       # 单位净值
+    accum_nav: Optional[float] = None      # 累计净值
+    adj_nav: Optional[float] = None        # 复权净值
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 
 @dataclass
 class StockValuationData:
@@ -382,3 +421,89 @@ class TuShareCollector:
         except Exception as e:
             logger.error(f"Error getting valuation with percentile for {ts_code}: {e}")
             return None
+
+    def fetch_index_valuations(self) -> List[IndexValuationData]:
+        """Fetch PE/PB valuation for major A-share indices."""
+        if not self._pro:
+            return []
+
+        results = []
+        for ts_code, name in TRACKED_INDICES.items():
+            try:
+                df = self._pro.index_dailybasic(
+                    ts_code=ts_code, limit=1,
+                    fields="ts_code,trade_date,pe,pb,total_mv",
+                )
+                if df is not None and not df.empty:
+                    row = df.iloc[0]
+                    results.append(IndexValuationData(
+                        ts_code=ts_code,
+                        name=name,
+                        trade_date=self._parse_date(row["trade_date"]),
+                        pe=self._safe_float(row.get("pe")),
+                        pb=self._safe_float(row.get("pb")),
+                        total_mv=self._safe_decimal(row.get("total_mv")),
+                    ))
+            except Exception as e:
+                logger.error(f"Error fetching index valuation for {ts_code}: {e}")
+        return results
+
+    def fetch_fund_navs(self, ts_codes: List[str]) -> List[FundNavData]:
+        """Fetch latest NAV for given fund/ETF codes.
+
+        Args:
+            ts_codes: List of TuShare fund codes (e.g., ['512480.SH'])
+        """
+        if not self._pro:
+            return []
+
+        results = []
+        for ts_code in ts_codes:
+            try:
+                df = self._pro.fund_nav(ts_code=ts_code, limit=1)
+                if df is not None and not df.empty:
+                    row = df.iloc[0]
+                    results.append(FundNavData(
+                        ts_code=ts_code,
+                        nav_date=self._parse_date(row["nav_date"]) if pd.notna(row.get("nav_date")) else self._parse_date(row["ann_date"]),
+                        unit_nav=self._safe_float(row.get("unit_nav")),
+                        accum_nav=self._safe_float(row.get("accum_nav")),
+                        adj_nav=self._safe_float(row.get("adj_nav")),
+                    ))
+            except Exception as e:
+                logger.error(f"Error fetching fund NAV for {ts_code}: {e}")
+        return results
+
+    def fetch_all(self) -> Dict:
+        """Fetch all TuShare data: index valuations + fund NAVs for active CN holdings.
+
+        Returns:
+            Dict with 'index_valuations' and 'fund_navs' keys.
+        """
+        result = {
+            "index_valuations": self.fetch_index_valuations(),
+            "fund_navs": [],
+        }
+
+        # Get active CN holdings from DB for fund NAV
+        try:
+            from src.db.database import SessionLocal
+            from src.db.models import Holding, HoldingStatus
+            db = SessionLocal()
+            try:
+                holdings = db.query(Holding).filter(
+                    Holding.status == HoldingStatus.ACTIVE,
+                    Holding.market == "CN",
+                ).all()
+                ts_codes = []
+                for h in holdings:
+                    suffix = ".SH" if h.symbol.startswith(("5", "6")) else ".SZ"
+                    ts_codes.append(h.symbol + suffix)
+                if ts_codes:
+                    result["fund_navs"] = self.fetch_fund_navs(ts_codes)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Error fetching CN holdings for fund NAV: {e}")
+
+        return result

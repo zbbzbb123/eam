@@ -26,4 +26,9 @@ def get_db():
 
 def init_db():
     """Create all tables."""
+    # Import all model modules so they register with Base.metadata
+    import src.db.models  # noqa: F401
+    import src.db.models_market_data  # noqa: F401
+    import src.db.models_insider  # noqa: F401
+    import src.db.models_institutional  # noqa: F401
     Base.metadata.create_all(bind=engine)

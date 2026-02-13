@@ -31,13 +31,16 @@ class MacroData(Base):
 
 
 class NorthboundFlow(Base):
-    """Northbound capital flow data (北向资金) from AkShare."""
+    """Northbound capital flow data (北向资金) from TuShare moneyflow_hsgt."""
     __tablename__ = "northbound_flow"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     trade_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    net_flow: Mapped[Decimal] = mapped_column(DECIMAL(18, 4), nullable=False)  # 每日北向资金净流入 (亿元)
-    quota_remaining: Mapped[Decimal] = mapped_column(DECIMAL(18, 4), nullable=True)  # 当日余额 (亿元)
+    net_flow: Mapped[Decimal] = mapped_column(DECIMAL(18, 4), nullable=False)  # 北向交易额 (亿元) - TuShare north_money
+    hgt: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(18, 4), nullable=True)  # 沪股通交易额 (亿元)
+    sgt: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(18, 4), nullable=True)  # 深股通交易额 (亿元)
+    south_money: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(18, 4), nullable=True)  # 南向交易额 (亿元)
+    quota_remaining: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(18, 4), nullable=True)  # 当日余额 (亿元)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now()

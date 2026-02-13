@@ -1,12 +1,15 @@
 """APScheduler-based scheduled task framework."""
 import logging
 from typing import Any, Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.base import JobLookupError
 from fastapi import APIRouter, HTTPException
+
+TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,64 @@ def _collect_market_data() -> None:
                         logger.info(f"Stored fundamentals for {n} symbols (holdings + watchlist)")
                 except Exception as e:
                     logger.error(f"Failed to collect fundamentals: {e}")
+
+            # Daily quotes for CN holdings (critical for afternoon report)
+            try:
+                from src.db.models import Holding, HoldingStatus, Watchlist, Market, DailyQuote
+                from src.collectors.structured.akshare_collector import AkShareCollector
+                from datetime import date, timedelta
+
+                holdings = db.query(Holding).filter(
+                    Holding.status == HoldingStatus.ACTIVE,
+                    Holding.market == Market.CN
+                ).all()
+                symbols = [(h.symbol, h.market) for h in holdings if h.symbol != "CASH"]
+
+                # Also include CN watchlist symbols
+                watchlist_items = db.query(Watchlist).filter(
+                    Watchlist.market == Market.CN
+                ).all()
+                symbols.extend([(w.symbol, w.market) for w in watchlist_items])
+                symbols = list(set(symbols))
+
+                if symbols:
+                    collector = AkShareCollector()
+                    today = date.today()
+                    start = today - timedelta(days=7)
+                    synced = 0
+                    for symbol, market in symbols:
+                        try:
+                            quotes = collector.fetch_quotes(symbol, start, today, market.value)
+                            for q in quotes:
+                                existing = db.query(DailyQuote).filter(
+                                    DailyQuote.symbol == symbol,
+                                    DailyQuote.market == market,
+                                    DailyQuote.trade_date == q.trade_date,
+                                ).first()
+                                if existing:
+                                    existing.open = q.open
+                                    existing.high = q.high
+                                    existing.low = q.low
+                                    existing.close = q.close
+                                    existing.volume = q.volume
+                                else:
+                                    db.add(DailyQuote(
+                                        symbol=symbol,
+                                        market=market,
+                                        trade_date=q.trade_date,
+                                        open=q.open,
+                                        high=q.high,
+                                        low=q.low,
+                                        close=q.close,
+                                        volume=q.volume,
+                                    ))
+                                synced += 1
+                        except Exception as e:
+                            logger.warning(f"PM: Failed to sync quotes for {symbol}: {e}")
+                    db.commit()
+                    logger.info(f"PM: Synced {synced} daily quotes for {len(symbols)} CN symbols")
+            except Exception as e:
+                logger.error(f"PM: Failed to collect CN daily quotes: {e}")
 
             # Sector fund flows
             info = registry.get("sector_flow")
@@ -276,6 +337,65 @@ def _collect_market_data_am() -> None:
                 except Exception as e:
                     logger.error(f"AM: Failed to collect market_indicators: {e}")
 
+            # Daily quotes for US/HK holdings (critical for morning report)
+            try:
+                from src.db.models import Holding, HoldingStatus, Watchlist, Market, DailyQuote
+                from src.collectors.structured.yfinance_collector import YFinanceCollector
+                from datetime import date, timedelta
+
+                holdings = db.query(Holding).filter(
+                    Holding.status == HoldingStatus.ACTIVE,
+                    Holding.market.in_([Market.US, Market.HK])
+                ).all()
+                symbols = [(h.symbol, h.market) for h in holdings if h.symbol != "CASH"]
+
+                # Also include US/HK watchlist symbols
+                watchlist_items = db.query(Watchlist).filter(
+                    Watchlist.market.in_([Market.US, Market.HK])
+                ).all()
+                symbols.extend([(w.symbol, w.market) for w in watchlist_items])
+                symbols = list(set(symbols))
+
+                if symbols:
+                    collector = YFinanceCollector()
+                    today = date.today()
+                    start = today - timedelta(days=7)  # Fetch last week to catch any gaps
+                    synced = 0
+                    for symbol, market in symbols:
+                        try:
+                            quotes = collector.fetch_quotes(symbol, start, today)
+                            for q in quotes:
+                                # Upsert: check if exists, update if so
+                                existing = db.query(DailyQuote).filter(
+                                    DailyQuote.symbol == symbol,
+                                    DailyQuote.market == market,
+                                    DailyQuote.trade_date == q.trade_date,
+                                ).first()
+                                if existing:
+                                    existing.open = q.open
+                                    existing.high = q.high
+                                    existing.low = q.low
+                                    existing.close = q.close
+                                    existing.volume = q.volume
+                                else:
+                                    db.add(DailyQuote(
+                                        symbol=symbol,
+                                        market=market,
+                                        trade_date=q.trade_date,
+                                        open=q.open,
+                                        high=q.high,
+                                        low=q.low,
+                                        close=q.close,
+                                        volume=q.volume,
+                                    ))
+                                synced += 1
+                        except Exception as e:
+                            logger.warning(f"AM: Failed to sync quotes for {symbol}: {e}")
+                    db.commit()
+                    logger.info(f"AM: Synced {synced} daily quotes for {len(symbols)} US/HK symbols")
+            except Exception as e:
+                logger.error(f"AM: Failed to collect US/HK daily quotes: {e}")
+
             # Fundamentals for US/HK holdings
             info = registry.get("fundamentals")
             if info and info.is_configured():
@@ -406,9 +526,9 @@ class SchedulerService:
         Returns:
             The job ID.
         """
-        trigger = CronTrigger(hour=hour, minute=minute)
+        trigger = CronTrigger(hour=hour, minute=minute, timezone=TIMEZONE)
         job = self._scheduler.add_job(func, trigger=trigger, id=name, name=name, replace_existing=True)
-        logger.info(f"Added daily job '{name}' at {hour:02d}:{minute:02d}")
+        logger.info(f"Added daily job '{name}' at {hour:02d}:{minute:02d} CST")
         return job.id
 
     def add_interval_job(
@@ -485,9 +605,9 @@ class SchedulerService:
         Returns:
             The job ID.
         """
-        trigger = CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute)
+        trigger = CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute, timezone=TIMEZONE)
         job = self._scheduler.add_job(func, trigger=trigger, id=name, name=name, replace_existing=True)
-        logger.info(f"Added weekly job '{name}' on day {day_of_week} at {hour:02d}:{minute:02d}")
+        logger.info(f"Added weekly job '{name}' on day {day_of_week} at {hour:02d}:{minute:02d} CST")
         return job.id
 
     def setup_default_jobs(self) -> None:

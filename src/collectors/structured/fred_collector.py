@@ -31,6 +31,8 @@ CONFIGURED_SERIES = {
     "GDP": "Gross Domestic Product",
     "UNRATE": "Unemployment Rate",
     "FEDFUNDS": "Federal Funds Effective Rate",
+    "DGS2": "2-Year Treasury Constant Maturity Rate",
+    "DGS10": "10-Year Treasury Constant Maturity Rate",
 }
 
 
@@ -48,6 +50,29 @@ class MacroDataPoint:
             "series_id": self.series_id,
             "date": self.date,
             "value": self.value,
+        }
+
+
+@dataclass
+class YieldSpread:
+    """Data class for the 10Y-2Y Treasury yield spread.
+
+    A negative spread indicates an inverted yield curve, which is
+    historically a recession signal.
+    """
+
+    date: date
+    dgs2: Decimal
+    dgs10: Decimal
+    spread: Decimal
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary."""
+        return {
+            "date": self.date,
+            "dgs2": self.dgs2,
+            "dgs10": self.dgs10,
+            "spread": self.spread,
         }
 
 
@@ -237,3 +262,38 @@ class FREDCollector:
         except Exception as e:
             logger.error(f"Unexpected error fetching latest value for {series_id}: {e}")
             return None
+
+    async def fetch_yield_spread(self) -> Optional[YieldSpread]:
+        """
+        Fetch the latest 10Y-2Y Treasury yield spread.
+
+        Fetches the most recent DGS10 and DGS2 values and calculates
+        the spread (DGS10 - DGS2). A negative spread indicates an
+        inverted yield curve, which is historically a recession signal.
+
+        Returns:
+            YieldSpread object or None if data is unavailable.
+        """
+        dgs10_point, dgs2_point = await asyncio.gather(
+            self.fetch_latest_value("DGS10"),
+            self.fetch_latest_value("DGS2"),
+        )
+
+        if dgs10_point is None or dgs2_point is None:
+            logger.warning(
+                "Unable to calculate yield spread: missing data "
+                f"(DGS10={'available' if dgs10_point else 'missing'}, "
+                f"DGS2={'available' if dgs2_point else 'missing'})"
+            )
+            return None
+
+        spread = dgs10_point.value - dgs2_point.value
+        # Use the earlier of the two dates to be conservative
+        spread_date = min(dgs10_point.date, dgs2_point.date)
+
+        return YieldSpread(
+            date=spread_date,
+            dgs2=dgs2_point.value,
+            dgs10=dgs10_point.value,
+            spread=spread,
+        )

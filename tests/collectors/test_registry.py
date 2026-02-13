@@ -157,12 +157,13 @@ class TestCollectorRegistryInitialization:
             "fred",
             "northbound",
             "sec13f",
-            "github",
-            "huggingface",
             "tushare",
-            "openinsider",
             "jisilu",
             "commodity",
+            "cn_macro",
+            "sector",
+            "market_indicators",
+            "fundamentals",
         ]
 
         for name in expected_collectors:
@@ -451,7 +452,7 @@ class TestBuiltInCollectors:
 
         assert info is not None
         assert info.collector_type == CollectorType.SYNC
-        assert info.source == "akshare"
+        assert info.source == "tushare"
 
     def test_sec13f_collector_registered(self, registry):
         """Test SEC 13F collector is registered."""
@@ -461,22 +462,6 @@ class TestBuiltInCollectors:
         assert info.collector_type == CollectorType.ASYNC
         assert info.source == "sec_edgar"
 
-    def test_github_collector_registered(self, registry):
-        """Test GitHub collector is registered."""
-        info = registry.get("github")
-
-        assert info is not None
-        assert info.collector_type == CollectorType.ASYNC
-        assert info.source == "github"
-
-    def test_huggingface_collector_registered(self, registry):
-        """Test HuggingFace collector is registered."""
-        info = registry.get("huggingface")
-
-        assert info is not None
-        assert info.collector_type == CollectorType.ASYNC
-        assert info.source == "huggingface"
-
     def test_tushare_collector_registered(self, registry):
         """Test TuShare collector is registered."""
         info = registry.get("tushare")
@@ -484,14 +469,6 @@ class TestBuiltInCollectors:
         assert info is not None
         assert info.collector_type == CollectorType.SYNC
         assert info.source == "tushare"
-
-    def test_openinsider_crawler_registered(self, registry):
-        """Test OpenInsider crawler is registered."""
-        info = registry.get("openinsider")
-
-        assert info is not None
-        assert info.collector_type == CollectorType.SYNC
-        assert info.source == "openinsider"
 
     def test_jisilu_crawler_registered(self, registry):
         """Test Jisilu crawler is registered."""
@@ -508,6 +485,34 @@ class TestBuiltInCollectors:
         assert info is not None
         assert info.collector_type == CollectorType.SYNC
         assert info.source == "100ppi"
+
+    def test_cn_macro_collector_registered(self, registry):
+        """Test CN Macro collector is registered."""
+        info = registry.get("cn_macro")
+
+        assert info is not None
+        assert info.collector_type == CollectorType.ASYNC
+
+    def test_sector_collector_registered(self, registry):
+        """Test Sector collector is registered."""
+        info = registry.get("sector")
+
+        assert info is not None
+        assert info.collector_type == CollectorType.SYNC
+
+    def test_market_indicators_collector_registered(self, registry):
+        """Test Market Indicators collector is registered."""
+        info = registry.get("market_indicators")
+
+        assert info is not None
+        assert info.collector_type == CollectorType.SYNC
+
+    def test_fundamentals_collector_registered(self, registry):
+        """Test Fundamentals collector is registered."""
+        info = registry.get("fundamentals")
+
+        assert info is not None
+        assert info.collector_type == CollectorType.SYNC
 
 
 class TestCLIIntegration:

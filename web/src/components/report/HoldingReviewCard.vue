@@ -1,10 +1,16 @@
 <script setup>
 import { ref, computed } from 'vue'
 
-const props = defineProps({ holding: { type: Object, required: true } })
+const props = defineProps({
+  holding: { type: Object, required: true },
+  isWeekly: { type: Boolean, default: false }
+})
 const showDetail = ref(false)
 
 const h = computed(() => props.holding)
+
+// Determine if this is weekly data based on presence of week_change_pct
+const isWeeklyData = computed(() => props.isWeekly || h.value.week_change_pct != null)
 
 const actionLabel = { hold: '持有', add: '加仓', reduce: '减仓', sell: '卖出' }
 const actionColor = {
@@ -21,6 +27,10 @@ function formatPct(v) {
 function formatMoney(v) {
   if (v == null) return '--'
   return (v >= 0 ? '+' : '') + v.toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+function formatPrice(v) {
+  if (v == null) return '--'
+  return v.toFixed(2)
 }
 </script>
 
@@ -46,16 +56,43 @@ function formatMoney(v) {
     <div class="holding-data">
       <div class="data-item">
         <span class="data-label">现价</span>
-        <span class="data-value">{{ h.current_price?.toFixed(2) || '--' }}</span>
+        <span class="data-value">{{ formatPrice(h.current_price) }}</span>
       </div>
       <div class="data-item">
+        <span class="data-label">成本</span>
+        <span class="data-value">{{ formatPrice(h.avg_cost) }}</span>
+      </div>
+      <div class="data-item" v-if="h.quantity">
+        <span class="data-label">数量</span>
+        <span class="data-value">{{ h.quantity }}</span>
+      </div>
+      <div class="data-item" v-if="h.market_value_cny">
+        <span class="data-label">市值</span>
+        <span class="data-value">{{ h.market_value_cny?.toLocaleString() }}</span>
+      </div>
+      <!-- Daily: today change -->
+      <div class="data-item" v-if="!isWeeklyData && h.today_change_pct != null">
         <span class="data-label">今日</span>
         <span class="data-value" :style="{ color: (h.today_change_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }">
           {{ formatPct(h.today_change_pct) }}
         </span>
       </div>
+      <!-- Weekly: week change -->
+      <div class="data-item" v-if="isWeeklyData">
+        <span class="data-label">本周</span>
+        <span class="data-value" :style="{ color: (h.week_change_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }">
+          {{ formatPct(h.week_change_pct) }}
+        </span>
+      </div>
+      <!-- Weekly: week P&L -->
+      <div class="data-item" v-if="isWeeklyData && h.week_pnl != null">
+        <span class="data-label">周盈亏</span>
+        <span class="data-value" :style="{ color: (h.week_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)' }">
+          {{ formatMoney(h.week_pnl) }}
+        </span>
+      </div>
       <div class="data-item">
-        <span class="data-label">盈亏</span>
+        <span class="data-label">总盈亏</span>
         <span class="data-value" :style="{ color: (h.total_pnl || 0) >= 0 ? 'var(--green)' : 'var(--red)' }">
           {{ formatMoney(h.total_pnl) }}
         </span>
@@ -65,10 +102,6 @@ function formatMoney(v) {
         <span class="data-value" :style="{ color: (h.total_pnl_pct || 0) >= 0 ? 'var(--green)' : 'var(--red)' }">
           {{ formatPct(h.total_pnl_pct) }}
         </span>
-      </div>
-      <div class="data-item">
-        <span class="data-label">成本</span>
-        <span class="data-value">{{ h.avg_cost?.toFixed(2) || '--' }}</span>
       </div>
     </div>
 
@@ -149,24 +182,28 @@ function formatMoney(v) {
   font-weight: 600;
 }
 .holding-data {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 12px 16px;
   margin-bottom: 12px;
 }
 .data-item {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 .data-label {
   font-size: 11px;
   color: var(--text-muted);
 }
 .data-value {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .warning {
   font-size: 12px;

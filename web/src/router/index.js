@@ -3,12 +3,14 @@ import Dashboard from '../views/Dashboard.vue'
 import Holdings from '../views/Holdings.vue'
 import Signals from '../views/Signals.vue'
 import Reports from '../views/Reports.vue'
+import CollectionReport from '../views/CollectionReport.vue'
 
 const routes = [
   { path: '/', name: 'Dashboard', component: Dashboard },
   { path: '/holdings', name: 'Holdings', component: Holdings },
   { path: '/signals', name: 'Signals', component: Signals },
   { path: '/reports', name: 'Reports', component: Reports },
+  { path: '/collection', name: 'CollectionReport', component: CollectionReport },
 ]
 
 const router = createRouter({

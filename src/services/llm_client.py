@@ -85,6 +85,7 @@ class LLMClient:
         system_prompt: str,
         user_message: str,
         model: Optional[str] = None,
+        max_tokens: int = 2000,
     ) -> str:
         """Convenience method to chat with a system prompt.
 
@@ -92,6 +93,7 @@ class LLMClient:
             system_prompt: The system prompt.
             user_message: The user message.
             model: Model to use.
+            max_tokens: Maximum tokens in response.
 
         Returns:
             The assistant's response content.
@@ -100,7 +102,7 @@ class LLMClient:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
-        return await self.chat(messages, model=model)
+        return await self.chat(messages, model=model, max_tokens=max_tokens)
 
     @staticmethod
     def _parse_sse_response(raw: str) -> str:

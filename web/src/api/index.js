@@ -53,18 +53,6 @@ export function getSignals(params = {}) {
   return safe(api.get('/signals', { params }), [])
 }
 
-export function getWeeklyReport() {
-  return safe(api.get('/reports/weekly'), null)
-}
-
-export function getDailyReport() {
-  return safe(api.get('/reports/daily'), null)
-}
-
-export function getEnhancedWeeklyReport() {
-  return safe(api.get('/reports/weekly/enhanced'), null)
-}
-
 export function getSchedulerJobs() {
   return safe(api.get('/scheduler/jobs'), [])
 }

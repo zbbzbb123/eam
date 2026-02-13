@@ -112,6 +112,26 @@ class Transaction(Base):
     holding: Mapped["Holding"] = relationship("Holding", back_populates="transactions")
 
 
+class Watchlist(Base):
+    """Watchlist items — symbols to track but not in portfolio."""
+    __tablename__ = "watchlist"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    market: Mapped[Market] = mapped_column(Enum(Market), nullable=False)
+    theme: Mapped[str] = mapped_column(String(100), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint('symbol', 'market', name='uq_watchlist_symbol_market'),
+        {"mysql_charset": "utf8mb4"},
+    )
+
+
 class DailyQuote(Base):
     """Daily stock quotes table."""
     __tablename__ = "daily_quotes"
