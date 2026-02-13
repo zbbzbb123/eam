@@ -682,3 +682,30 @@ def delete_scheduled_job(job_id: str) -> Dict[str, Any]:
     if not removed:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     return {"status": "removed", "job_id": job_id}
+
+
+@router.post("/trigger/{task_name}")
+def trigger_task(task_name: str) -> Dict[str, Any]:
+    """Manually trigger a scheduled task by name.
+
+    Available tasks: collect_market_data, collect_macro_data, run_analyzers,
+    generate_daily_report, generate_weekly_report
+    """
+    import threading
+
+    task_map = {
+        "collect_market_data": _collect_market_data,
+        "collect_macro_data": _collect_macro_data,
+        "run_analyzers": _run_analyzers,
+        "generate_daily_report": _generate_daily_report_new,
+        "generate_weekly_report": _generate_weekly_report_new,
+    }
+    func = task_map.get(task_name)
+    if not func:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Task '{task_name}' not found. Available: {list(task_map.keys())}",
+        )
+    # Run in background thread to avoid blocking
+    threading.Thread(target=func, daemon=True).start()
+    return {"status": "triggered", "task": task_name}
