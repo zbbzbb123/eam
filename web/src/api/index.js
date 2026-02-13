@@ -158,6 +158,23 @@ export function triggerWeeklyReport() {
   return safe(aiApi.post('/reports/weekly/generate'), null)
 }
 
+// === Watchlist ===
+export function getWatchlist() {
+  return safe(api.get('/watchlist'), [])
+}
+
+export function addWatchlistItem(data) {
+  return api.post('/watchlist', data).then(r => r.data)
+}
+
+export function updateWatchlistItem(id, data) {
+  return api.patch(`/watchlist/${id}`, data).then(r => r.data)
+}
+
+export function deleteWatchlistItem(id) {
+  return api.delete(`/watchlist/${id}`)
+}
+
 // === Collection report ===
 export function getCollectionReportRange(params = {}) {
   return safe(api.get('/collection-report/range', { params }), { source_names: [], days: [] })

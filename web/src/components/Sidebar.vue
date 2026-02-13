@@ -7,6 +7,7 @@ const router = useRouter()
 const navItems = [
   { path: '/', icon: '📊', label: '仪表盘' },
   { path: '/holdings', icon: '💼', label: '持仓管理' },
+  { path: '/watchlist', icon: '👀', label: '关注标的' },
   { path: '/signals', icon: '🔔', label: '信号中心' },
   { path: '/reports', icon: '📄', label: '报告分析' },
   { path: '/collection', icon: '🕷', label: '采集日报' },
