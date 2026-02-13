@@ -41,12 +41,14 @@ const txError = ref('')
 const txSubmitting = ref(false)
 
 onMounted(async () => {
-  // Sync prices first, then load holdings
+  // Load holdings first, then sync prices in background
+  holdings.value = await getHoldingsSummary()
+  loading.value = false
+  // Sync prices in background, reload when done
   syncing.value = true
   await syncPrices()
   syncing.value = false
   holdings.value = await getHoldingsSummary()
-  loading.value = false
 })
 
 async function reload() {
