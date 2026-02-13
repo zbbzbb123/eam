@@ -382,12 +382,34 @@ class CollectorRegistry:
             "fetch_daily_net_flow",
             "fetch_etf_premium_data",
             "fetch_all_tracked_commodities",
+            "fetch_all_holdings_fundamentals",
             "fetch_all",
         ]
 
         for method_name in method_names:
             method = getattr(instance, method_name, None)
             if method:
+                # For methods that need default arguments, wrap them
+                if method_name == "fetch_all_series":
+                    from datetime import date, timedelta
+                    end = date.today()
+                    start = end - timedelta(days=30)
+                    return lambda m=method, s=start, e=end: m(s, e)
+                if method_name == "fetch_all_holdings_fundamentals":
+                    from src.db.database import SessionLocal
+                    from src.db.models import Holding, HoldingStatus, Watchlist
+                    db = SessionLocal()
+                    try:
+                        holdings = db.query(Holding).filter(Holding.status == HoldingStatus.ACTIVE).all()
+                        pairs = [(h.symbol, h.market.value) for h in holdings if h.symbol != "CASH"]
+                        watchlist_items = db.query(Watchlist).all()
+                        pairs += [(w.symbol, w.market.value) for w in watchlist_items]
+                        pairs = list(set(pairs))
+                    finally:
+                        db.close()
+                    if not pairs:
+                        return lambda: {}
+                    return lambda m=method, p=pairs: m(p)
                 return method
 
         raise ValueError(f"No default method found for collector {type(instance).__name__}")
