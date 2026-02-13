@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Use Chinese mirrors for apt and pip
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
@@ -14,7 +17,7 @@ COPY pyproject.toml .
 COPY src/ ./src/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple .
 
 # Create non-root user for security
 RUN groupadd --gid 1000 eam \
