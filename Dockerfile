@@ -17,7 +17,7 @@ COPY pyproject.toml .
 COPY src/ ./src/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple .
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com .
 
 # Create non-root user for security
 RUN groupadd --gid 1000 eam \
