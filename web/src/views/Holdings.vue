@@ -3,7 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import {
   getHoldingsSummary, createHolding, updateHolding, deleteHolding,
   syncPrices, previewTransaction, updatePosition, getTransactions,
-  analyzeHolding, analyzeAllHoldings
+  createTransaction, analyzeHolding, analyzeAllHoldings
 } from '../api'
 import AIAnalysisModal from '../components/AIAnalysisModal.vue'
 
@@ -46,6 +46,13 @@ const txHistoryLoading = ref(false)
 const showTxHistory = ref(false)
 const showTxModal = ref(false)
 const txModalSymbol = ref('')
+
+// Add transaction form
+const showAddTx = ref(false)
+const addTxHoldingId = ref(null)
+const addTxForm = ref({ action: 'buy', quantity: '', price: '', transaction_date: '', reason: '' })
+const addTxError = ref('')
+const addTxSubmitting = ref(false)
 
 onMounted(async () => {
   holdings.value = await getHoldingsSummary()
@@ -239,11 +246,47 @@ async function loadTxHistory() {
 // === View transactions (standalone) ===
 async function openTxModal(h) {
   txModalSymbol.value = h.symbol
+  addTxHoldingId.value = h.id
   txHistory.value = []
   txHistoryLoading.value = true
   showTxModal.value = true
+  showAddTx.value = false
   txHistory.value = await getTransactions(h.id)
   txHistoryLoading.value = false
+}
+
+// === Add transaction ===
+function openAddTxForm() {
+  addTxForm.value = { action: 'buy', quantity: '', price: '', transaction_date: new Date().toISOString().slice(0, 10), reason: '' }
+  addTxError.value = ''
+  showAddTx.value = true
+}
+
+async function submitAddTx() {
+  const f = addTxForm.value
+  if (!f.quantity || !f.price || !f.transaction_date) {
+    addTxError.value = '请填写数量、价格和日期'
+    return
+  }
+  addTxSubmitting.value = true
+  addTxError.value = ''
+  try {
+    await createTransaction(addTxHoldingId.value, {
+      action: f.action,
+      quantity: Number(f.quantity),
+      price: Number(f.price),
+      transaction_date: new Date(f.transaction_date).toISOString(),
+      reason: f.reason || (f.action === 'buy' ? '加仓' : '减仓')
+    })
+    showAddTx.value = false
+    // Refresh transactions and holdings
+    txHistory.value = await getTransactions(addTxHoldingId.value)
+    await reload()
+  } catch (e) {
+    addTxError.value = e.response?.data?.detail || '添加失败'
+  } finally {
+    addTxSubmitting.value = false
+  }
 }
 
 // === Delete holding ===
@@ -524,6 +567,47 @@ async function onBatchAnalyze() {
             </div>
           </div>
         </div>
+
+        <!-- Add transaction inline form -->
+        <div v-if="!showAddTx" class="add-tx-toggle" @click="openAddTxForm">+ 新增交易</div>
+        <div v-else class="add-tx-form">
+          <div class="section-label">新增交易</div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>类型</label>
+              <select v-model="addTxForm.action">
+                <option value="buy">买入</option>
+                <option value="sell">卖出</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>日期</label>
+              <input v-model="addTxForm.transaction_date" type="date" />
+            </div>
+          </div>
+          <div class="form-grid">
+            <div class="form-row">
+              <label>数量</label>
+              <input v-model="addTxForm.quantity" type="number" min="1" placeholder="股数" />
+            </div>
+            <div class="form-row">
+              <label>价格</label>
+              <input v-model="addTxForm.price" type="number" step="0.01" min="0.01" placeholder="每股价格" />
+            </div>
+          </div>
+          <div class="form-row">
+            <label>原因</label>
+            <input v-model="addTxForm.reason" :placeholder="addTxForm.action === 'buy' ? '加仓' : '减仓'" />
+          </div>
+          <div v-if="addTxError" class="form-error">{{ addTxError }}</div>
+          <div class="form-actions" style="margin-top:10px">
+            <button class="btn-cancel" @click="showAddTx = false">取消</button>
+            <button class="btn-primary" :disabled="addTxSubmitting" @click="submitAddTx">
+              {{ addTxSubmitting ? '提交中...' : '确认添加' }}
+            </button>
+          </div>
+        </div>
+
         <div class="form-actions">
           <button class="btn-cancel" @click="showTxModal = false">关闭</button>
         </div>
@@ -660,4 +744,14 @@ async function onBatchAnalyze() {
 .tx-timeline-detail { font-size: 13px; color: #bbb; }
 .tx-timeline-total { color: #888; margin-left: 8px; font-size: 12px; }
 .tx-timeline-reason { color: #666; font-size: 12px; margin-top: 2px; }
+
+/* Add transaction */
+.add-tx-toggle {
+  color: #4fc3f7; font-size: 13px; cursor: pointer; padding: 12px 0 4px;
+  user-select: none; font-weight: 600;
+}
+.add-tx-toggle:hover { text-decoration: underline; }
+.add-tx-form {
+  margin-top: 8px; padding: 14px; background: #2a2a3e; border-radius: 8px;
+}
 </style>
