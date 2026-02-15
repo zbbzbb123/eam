@@ -50,7 +50,8 @@ def _fetch_em_quote(symbol: str, market: str) -> Optional[SinaQuote]:
     secid = _to_em_secid(symbol, market)
     params = {
         "secid": secid,
-        "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f60,f170,f171",
+        # f59 = decimal precision (2 for stocks, 3 for ETFs/funds)
+        "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f59,f60,f170,f171",
         "ut": "fa5fd1943c7b386f172d6893dbbd1",
     }
     try:
@@ -60,15 +61,18 @@ def _fetch_em_quote(symbol: str, market: str) -> Optional[SinaQuote]:
         if not data:
             return None
 
-        # f43=最新价(分), f44=最高(分), f45=最低(分), f46=今开(分)
-        # f47=成交量, f48=成交额, f57=代码, f58=名称, f60=昨收(分)
-        # f170=涨跌幅(%), f171=涨跌额
+        # f43=最新价, f44=最高, f45=最低, f46=今开 (all as integers, scaled by 10^f59)
+        # f47=成交量, f58=名称, f59=小数位数
         price = data.get("f43")
         if price is None or price == "-":
             return None
 
-        # East Money returns prices in cents for CN, actual price for HK
-        divisor = 100 if market == "CN" else 1000
+        # f59 tells us how many decimal places: 2 for stocks, 3 for ETFs/funds
+        precision = data.get("f59", 2)
+        if market == "HK":
+            precision = 3  # HK always 3 decimal places
+        divisor = 10 ** precision
+
         close = Decimal(str(price)) / divisor
         if close <= 0:
             return None
