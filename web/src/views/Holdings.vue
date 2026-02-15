@@ -44,6 +44,8 @@ const previewSubmitting = ref(false)
 const txHistory = ref([])
 const txHistoryLoading = ref(false)
 const showTxHistory = ref(false)
+const showTxModal = ref(false)
+const txModalSymbol = ref('')
 
 onMounted(async () => {
   holdings.value = await getHoldingsSummary()
@@ -91,7 +93,7 @@ function pctFmt(v) {
 }
 
 function tierLabel(t) {
-  const map = { core: '核心', growth: '成长', gamble: '投机', CORE: '核心', GROWTH: '成长', GAMBLE: '投机' }
+  const map = { core: 'Core', growth: 'Growth', gamble: 'Gamble', CORE: 'Core', GROWTH: 'Growth', GAMBLE: 'Gamble' }
   return map[t] || t
 }
 
@@ -234,6 +236,16 @@ async function loadTxHistory() {
   showTxHistory.value = true
 }
 
+// === View transactions (standalone) ===
+async function openTxModal(h) {
+  txModalSymbol.value = h.symbol
+  txHistory.value = []
+  txHistoryLoading.value = true
+  showTxModal.value = true
+  txHistory.value = await getTransactions(h.id)
+  txHistoryLoading.value = false
+}
+
 // === Delete holding ===
 async function onDelete(h) {
   if (!confirm(`确认删除 ${h.symbol} 的持仓记录？`)) return
@@ -273,9 +285,9 @@ async function onBatchAnalyze() {
     <div class="filters">
       <select v-model="filterTier">
         <option value="">全部分层</option>
-        <option value="core">核心</option>
-        <option value="growth">成长</option>
-        <option value="gamble">投机</option>
+        <option value="core">Core</option>
+        <option value="growth">Growth</option>
+        <option value="gamble">Gamble</option>
       </select>
       <select v-model="filterMarket">
         <option value="">全部市场</option>
@@ -324,6 +336,7 @@ async function onBatchAnalyze() {
             <td :class="pnlClass(h.pnl_pct)">{{ pctFmt(h.pnl_pct) }}</td>
             <td class="actions">
               <button class="btn-edit" @click="openEditModal(h)">编辑</button>
+              <button class="btn-tx" @click="openTxModal(h)">记录</button>
               <button class="btn-del" @click="onDelete(h)">删除</button>
               <button class="ai-btn-sm" @click="onAnalyzeHolding(h)">AI</button>
             </td>
@@ -351,9 +364,9 @@ async function onBatchAnalyze() {
         <div class="form-row">
           <label>分层</label>
           <select v-model="addForm.tier">
-            <option value="core">核心</option>
-            <option value="growth">成长</option>
-            <option value="gamble">投机</option>
+            <option value="core">Core</option>
+            <option value="growth">Growth</option>
+            <option value="gamble">Gamble</option>
           </select>
         </div>
         <div class="form-row">
@@ -406,9 +419,9 @@ async function onBatchAnalyze() {
         <div class="form-row">
           <label>分层</label>
           <select v-model="editForm.tier">
-            <option value="core">核心</option>
-            <option value="growth">成长</option>
-            <option value="gamble">投机</option>
+            <option value="core">Core</option>
+            <option value="growth">Growth</option>
+            <option value="gamble">Gamble</option>
           </select>
         </div>
         <div class="form-grid">
@@ -489,6 +502,34 @@ async function onBatchAnalyze() {
       </div>
     </div>
 
+    <!-- 交易记录弹窗 -->
+    <div v-if="showTxModal" class="modal-overlay" @click.self="showTxModal = false">
+      <div class="modal modal-wide">
+        <h2>{{ txModalSymbol }} 交易记录</h2>
+        <div v-if="txHistoryLoading" class="tx-empty">加载中...</div>
+        <div v-else-if="!txHistory.length" class="tx-empty">暂无交易记录</div>
+        <div v-else class="tx-timeline">
+          <div v-for="tx in txHistory" :key="tx.id" class="tx-timeline-item">
+            <div class="tx-timeline-dot" :class="tx.action === 'buy' ? 'dot-buy' : 'dot-sell'"></div>
+            <div class="tx-timeline-content">
+              <div class="tx-timeline-header">
+                <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? '买入' : '卖出' }}</span>
+                <span class="tx-timeline-date">{{ tx.transaction_date?.slice(0, 10) }}</span>
+              </div>
+              <div class="tx-timeline-detail">
+                {{ fmt(tx.quantity, 0) }} 股 @ {{ fmt(tx.price) }}
+                <span class="tx-timeline-total">合计 {{ fmt(Number(tx.quantity) * Number(tx.price)) }}</span>
+              </div>
+              <div v-if="tx.reason" class="tx-timeline-reason">{{ tx.reason }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn-cancel" @click="showTxModal = false">关闭</button>
+        </div>
+      </div>
+    </div>
+
     <AIAnalysisModal
       :visible="aiModalVisible"
       :loading="aiLoading"
@@ -519,6 +560,8 @@ async function onBatchAnalyze() {
   font-size: 12px; cursor: pointer; font-weight: 600; color: #fff;
 }
 .btn-edit { background: #666; }
+.btn-tx { background: #555; color: #4fc3f7; }
+.btn-tx:hover { background: #4fc3f7; color: #fff; }
 .btn-del { background: #444; color: #f44336; }
 .btn-edit:hover { filter: brightness(1.15); }
 .btn-del:hover { background: #f44336; color: #fff; }
@@ -594,4 +637,27 @@ async function onBatchAnalyze() {
 .tx-sell { color: #43a047; font-weight: 600; }
 .tx-date { color: #666; }
 .tx-reason { color: #888; font-size: 12px; }
+
+/* Transaction timeline */
+.tx-timeline { padding: 8px 0; }
+.tx-timeline-item {
+  display: flex; gap: 12px; position: relative; padding-bottom: 16px;
+}
+.tx-timeline-item:not(:last-child)::before {
+  content: ''; position: absolute; left: 5px; top: 16px; bottom: 0;
+  width: 1px; background: #333;
+}
+.tx-timeline-dot {
+  width: 11px; height: 11px; border-radius: 50%; margin-top: 4px; flex-shrink: 0;
+}
+.dot-buy { background: #e53935; }
+.dot-sell { background: #43a047; }
+.tx-timeline-content { flex: 1; min-width: 0; }
+.tx-timeline-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;
+}
+.tx-timeline-date { color: #666; font-size: 12px; }
+.tx-timeline-detail { font-size: 13px; color: #bbb; }
+.tx-timeline-total { color: #888; margin-left: 8px; font-size: 12px; }
+.tx-timeline-reason { color: #666; font-size: 12px; margin-top: 2px; }
 </style>

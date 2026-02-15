@@ -17,7 +17,7 @@ const actionColor = {
   hold: 'var(--blue)', add: 'var(--green)',
   reduce: 'var(--orange)', sell: 'var(--red)',
 }
-const tierLabel = { core: '核心', growth: '成长', gamble: '投机' }
+const tierLabel = { core: 'Core', growth: 'Growth', gamble: 'Gamble' }
 const marketBadgeColor = { US: '#448aff', HK: '#00c853', CN: '#ff9800' }
 
 function formatPct(v) {
