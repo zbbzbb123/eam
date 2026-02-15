@@ -24,7 +24,7 @@ def _make_holding(**overrides) -> Holding:
     defaults = dict(
         symbol="AAPL",
         market=Market.US,
-        tier=Tier.STABLE,
+        tier=Tier.CORE,
         quantity=Decimal("100"),
         avg_cost=Decimal("150.00"),
         first_buy_date=date(2024, 1, 15),
@@ -87,7 +87,7 @@ class TestBuildHoldingPrompt:
         prompt = _build_holding_prompt(h)
         assert "AAPL" in prompt
         assert "US" in prompt
-        assert "stable" in prompt
+        assert "core" in prompt
         assert "150.00" in prompt or "150.0000" in prompt
         assert "Strong ecosystem" in prompt
         assert "130.00" in prompt or "130.0000" in prompt

@@ -19,8 +19,8 @@ const option = computed(() => ({
     center: ['50%', '45%'],
     label: { color: '#e0e0e0', formatter: '{b}\n{d}%' },
     data: [
-      { value: props.tiers?.STABLE?.current_pct ?? 50, name: 'STABLE', itemStyle: { color: '#00c853' } },
-      { value: props.tiers?.MODERATE?.current_pct ?? 30, name: 'MODERATE', itemStyle: { color: '#ff9800' } },
+      { value: props.tiers?.CORE?.current_pct ?? 50, name: 'CORE', itemStyle: { color: '#00c853' } },
+      { value: props.tiers?.GROWTH?.current_pct ?? 30, name: 'GROWTH', itemStyle: { color: '#ff9800' } },
       { value: props.tiers?.GAMBLE?.current_pct ?? 20, name: 'GAMBLE', itemStyle: { color: '#ff5252' } },
     ],
   }],

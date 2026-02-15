@@ -53,7 +53,7 @@ def client():
     Base.metadata.drop_all(bind=engine)
 
 
-def _create_holding(client, symbol="VOO", tier="stable", quantity="100.0", avg_cost="400.00"):
+def _create_holding(client, symbol="VOO", tier="core", quantity="100.0", avg_cost="400.00"):
     """Helper to create a holding."""
     return client.post("/api/holdings", json={
         "symbol": symbol,
@@ -83,8 +83,8 @@ class TestReportsAPI:
 
     def test_weekly_report_with_holdings(self, client):
         """Test weekly report with holdings."""
-        _create_holding(client, "VOO", "stable", "100.0", "400.00")
-        _create_holding(client, "QQQ", "medium", "50.0", "600.00")
+        _create_holding(client, "VOO", "core", "100.0", "400.00")
+        _create_holding(client, "QQQ", "growth", "50.0", "600.00")
 
         response = client.get("/api/reports/weekly")
         assert response.status_code == 200
@@ -94,7 +94,7 @@ class TestReportsAPI:
 
     def test_weekly_report_text(self, client):
         """Test weekly report as plain text."""
-        _create_holding(client, "VOO", "stable", "100.0", "400.00")
+        _create_holding(client, "VOO", "core", "100.0", "400.00")
 
         response = client.get("/api/reports/weekly/text")
         assert response.status_code == 200
@@ -111,7 +111,7 @@ class TestReportsAPI:
 
     def test_weekly_report_markdown(self, client):
         """Test weekly report as Markdown."""
-        _create_holding(client, "VOO", "stable", "100.0", "400.00")
+        _create_holding(client, "VOO", "core", "100.0", "400.00")
 
         response = client.get("/api/reports/weekly/markdown")
         assert response.status_code == 200

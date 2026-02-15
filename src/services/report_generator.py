@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 # Tier allocation targets (same as portfolio_health.py)
 TIER_TARGETS = {
-    Tier.STABLE: Decimal("0.40"),
-    Tier.MEDIUM: Decimal("0.30"),
+    Tier.CORE: Decimal("0.40"),
+    Tier.GROWTH: Decimal("0.30"),
     Tier.GAMBLE: Decimal("0.30"),
 }
 

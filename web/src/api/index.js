@@ -65,7 +65,7 @@ export function getInvitationCodes() {
 export function getPortfolioSummary() {
   return safe(api.get('/portfolio/summary'), {
     total_value: 0,
-    tiers: { STABLE: { current_pct: 0, target_pct: 50 }, MODERATE: { current_pct: 0, target_pct: 30 }, GAMBLE: { current_pct: 0, target_pct: 20 } },
+    tiers: { CORE: { current_pct: 0, target_pct: 40 }, GROWTH: { current_pct: 0, target_pct: 30 }, GAMBLE: { current_pct: 0, target_pct: 30 } },
   })
 }
 
@@ -134,8 +134,16 @@ export function enhanceReport() {
   return aiApi.post('/ai/enhance-report').then(r => r.data).catch(() => null)
 }
 
-export function classifyTier(symbol, market) {
-  return aiApi.post('/ai/classify-tier', { symbol, market }).then(r => r.data).catch(() => ({ tier: 'medium' }))
+export function previewTransaction(holdingId, data) {
+  return api.post(`/holdings/${holdingId}/preview-transaction`, data).then(r => r.data)
+}
+
+export function updatePosition(holdingId, data) {
+  return api.post(`/holdings/${holdingId}/update-position`, data).then(r => r.data)
+}
+
+export function getTransactions(holdingId) {
+  return safe(api.get(`/holdings/${holdingId}/transactions`), [])
 }
 
 // === Pre-generated report endpoints ===

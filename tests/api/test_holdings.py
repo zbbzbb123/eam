@@ -82,7 +82,7 @@ class TestHoldingsAPI:
         client.post("/api/holdings", json={
             "symbol": "VOO",
             "market": "US",
-            "tier": "stable",
+            "tier": "core",
             "quantity": "50.0",
             "avg_cost": "450.00",
             "first_buy_date": "2025-01-01",
@@ -91,7 +91,7 @@ class TestHoldingsAPI:
         client.post("/api/holdings", json={
             "symbol": "QQQ",
             "market": "US",
-            "tier": "medium",
+            "tier": "growth",
             "quantity": "20.0",
             "avg_cost": "420.00",
             "first_buy_date": "2025-01-15",
@@ -108,7 +108,7 @@ class TestHoldingsAPI:
         client.post("/api/holdings", json={
             "symbol": "VOO",
             "market": "US",
-            "tier": "stable",
+            "tier": "core",
             "quantity": "50.0",
             "avg_cost": "450.00",
             "first_buy_date": "2025-01-01",
@@ -124,7 +124,7 @@ class TestHoldingsAPI:
             "buy_reason": "AI play",
         })
 
-        response = client.get("/api/holdings?tier=stable")
+        response = client.get("/api/holdings?tier=core")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1

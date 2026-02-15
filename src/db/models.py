@@ -23,8 +23,8 @@ class Market(PyEnum):
 
 class Tier(PyEnum):
     """Portfolio tier enum."""
-    STABLE = "stable"
-    MEDIUM = "medium"
+    CORE = "core"
+    GROWTH = "growth"
     GAMBLE = "gamble"
 
 

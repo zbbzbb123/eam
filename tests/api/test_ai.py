@@ -59,7 +59,7 @@ def sample_holding():
     holding = Holding(
         symbol="AAPL",
         market=Market.US,
-        tier=Tier.STABLE,
+        tier=Tier.CORE,
         quantity=Decimal("100"),
         avg_cost=Decimal("150.00"),
         first_buy_date=date(2024, 1, 1),

@@ -37,7 +37,7 @@ const tiers = computed(() => summary.value?.tiers || {})
 
 const deviationOption = computed(() => {
   const t = tiers.value
-  const names = ['STABLE', 'MODERATE', 'GAMBLE']
+  const names = ['CORE', 'GROWTH', 'GAMBLE']
   const deviations = names.map(n => {
     const tier = t[n] || {}
     return ((tier.current_pct || 0) - (tier.target_pct || 0)).toFixed(1)

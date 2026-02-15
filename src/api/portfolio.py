@@ -44,8 +44,8 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
 # Target allocations (from boss's framework)
 TARGET_ALLOCATIONS = {
-    Tier.STABLE: Decimal("40"),
-    Tier.MEDIUM: Decimal("30"),
+    Tier.CORE: Decimal("40"),
+    Tier.GROWTH: Decimal("30"),
     Tier.GAMBLE: Decimal("30"),
 }
 
@@ -72,15 +72,15 @@ def get_portfolio_overview(
             total_value=Decimal("0"),
             allocations=[
                 TierAllocation(
-                    tier=TierEnum.STABLE,
-                    target_pct=TARGET_ALLOCATIONS[Tier.STABLE],
+                    tier=TierEnum.CORE,
+                    target_pct=TARGET_ALLOCATIONS[Tier.CORE],
                     actual_pct=Decimal("0"),
                     drift_pct=Decimal("-40"),
                     market_value=Decimal("0"),
                 ),
                 TierAllocation(
-                    tier=TierEnum.MEDIUM,
-                    target_pct=TARGET_ALLOCATIONS[Tier.MEDIUM],
+                    tier=TierEnum.GROWTH,
+                    target_pct=TARGET_ALLOCATIONS[Tier.GROWTH],
                     actual_pct=Decimal("0"),
                     drift_pct=Decimal("-30"),
                     market_value=Decimal("0"),
@@ -108,7 +108,7 @@ def get_portfolio_overview(
 
     # Calculate allocations
     allocations = []
-    for tier in [Tier.STABLE, Tier.MEDIUM, Tier.GAMBLE]:
+    for tier in [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]:
         if total_value > 0:
             actual_pct = (tier_values[tier] / total_value) * 100
         else:
@@ -197,7 +197,7 @@ def get_portfolio_summary(
 
     if not holdings:
         tiers = []
-        for tier in [Tier.STABLE, Tier.MEDIUM, Tier.GAMBLE]:
+        for tier in [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]:
             target = TARGET_ALLOCATIONS[tier]
             tiers.append(TierSummaryResponse(
                 tier=tier.value,
@@ -218,7 +218,7 @@ def get_portfolio_summary(
     total_value = sum(holding_values.values())
 
     tiers = []
-    for tier in [Tier.STABLE, Tier.MEDIUM, Tier.GAMBLE]:
+    for tier in [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]:
         tier_holdings = [h for h in holdings if h.tier == tier]
         tier_value = sum(holding_values.get(h.id, Decimal("0")) for h in tier_holdings)
         target = TARGET_ALLOCATIONS[tier]

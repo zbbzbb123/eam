@@ -27,7 +27,7 @@ def _make_holding(
     id=1,
     symbol="AAPL",
     market=Market.US,
-    tier=Tier.STABLE,
+    tier=Tier.CORE,
     quantity=Decimal("100"),
     avg_cost=Decimal("150.00"),
     status=HoldingStatus.ACTIVE,
@@ -103,7 +103,7 @@ class TestWeeklyReportDataClasses:
 
     def test_tier_summary(self):
         ts = TierSummary(
-            tier=Tier.STABLE,
+            tier=Tier.CORE,
             target_pct=Decimal("40"),
             actual_pct=Decimal("35"),
             deviation_pct=Decimal("-5"),
@@ -152,7 +152,7 @@ class TestWeeklyReportService:
 
     def test_build_portfolio_summary_single_tier(self, service, mock_db):
         """Single tier holding computes 100% actual allocation."""
-        holdings = [_make_holding(tier=Tier.STABLE, quantity=Decimal("100"), avg_cost=Decimal("100"))]
+        holdings = [_make_holding(tier=Tier.CORE, quantity=Decimal("100"), avg_cost=Decimal("100"))]
         mock_db.query.return_value.filter.return_value.all.return_value = holdings
         # Mock latest quotes
         quote = _make_quote(symbol="AAPL", close=Decimal("100"))
@@ -160,13 +160,13 @@ class TestWeeklyReportService:
 
         summary = service._build_portfolio_summary(mock_db)
         assert summary.total_value == Decimal("10000")
-        stable = next(t for t in summary.tiers if t.tier == Tier.STABLE)
+        stable = next(t for t in summary.tiers if t.tier == Tier.CORE)
         assert stable.actual_pct == Decimal("100")
         assert stable.deviation_pct == Decimal("60")  # 100 - 40 target
 
     def test_build_portfolio_summary_no_quote_uses_cost(self, service, mock_db):
         """When no quote available, use avg_cost * quantity as value."""
-        holdings = [_make_holding(tier=Tier.STABLE, quantity=Decimal("10"), avg_cost=Decimal("50"))]
+        holdings = [_make_holding(tier=Tier.CORE, quantity=Decimal("10"), avg_cost=Decimal("50"))]
         mock_db.query.return_value.filter.return_value.all.return_value = holdings
         mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
@@ -176,8 +176,8 @@ class TestWeeklyReportService:
     def test_build_portfolio_summary_multi_tier(self, service, mock_db):
         """Multiple tiers compute correct percentages."""
         holdings = [
-            _make_holding(id=1, symbol="VTI", tier=Tier.STABLE, quantity=Decimal("40"), avg_cost=Decimal("100")),
-            _make_holding(id=2, symbol="QQQ", tier=Tier.MEDIUM, quantity=Decimal("30"), avg_cost=Decimal("100")),
+            _make_holding(id=1, symbol="VTI", tier=Tier.CORE, quantity=Decimal("40"), avg_cost=Decimal("100")),
+            _make_holding(id=2, symbol="QQQ", tier=Tier.GROWTH, quantity=Decimal("30"), avg_cost=Decimal("100")),
             _make_holding(id=3, symbol="MEME", tier=Tier.GAMBLE, quantity=Decimal("30"), avg_cost=Decimal("100")),
         ]
         mock_db.query.return_value.filter.return_value.all.return_value = holdings
@@ -186,7 +186,7 @@ class TestWeeklyReportService:
 
         summary = service._build_portfolio_summary(mock_db)
         assert summary.total_value == Decimal("10000")
-        stable = next(t for t in summary.tiers if t.tier == Tier.STABLE)
+        stable = next(t for t in summary.tiers if t.tier == Tier.CORE)
         assert stable.actual_pct == Decimal("40")
         assert stable.deviation_pct == Decimal("0")
 
@@ -234,7 +234,7 @@ class TestWeeklyReportService:
 
     def test_build_risk_alerts_concentration(self, service, mock_db):
         """Single holding at 100% triggers concentration alert."""
-        holdings = [_make_holding(tier=Tier.STABLE, quantity=Decimal("100"), avg_cost=Decimal("100"))]
+        holdings = [_make_holding(tier=Tier.CORE, quantity=Decimal("100"), avg_cost=Decimal("100"))]
         mock_db.query.return_value.filter.return_value.all.return_value = holdings
         mock_db.query.return_value.filter.return_value.order_by.return_value.first.return_value = None
 
@@ -301,9 +301,9 @@ class TestWeeklyReportService:
             portfolio_summary=PortfolioSummary(
                 total_value=Decimal("100000"),
                 tiers=[
-                    TierSummary(tier=Tier.STABLE, target_pct=Decimal("40"), actual_pct=Decimal("38"),
+                    TierSummary(tier=Tier.CORE, target_pct=Decimal("40"), actual_pct=Decimal("38"),
                                 deviation_pct=Decimal("-2"), market_value=Decimal("38000"), holdings_count=2),
-                    TierSummary(tier=Tier.MEDIUM, target_pct=Decimal("30"), actual_pct=Decimal("32"),
+                    TierSummary(tier=Tier.GROWTH, target_pct=Decimal("30"), actual_pct=Decimal("32"),
                                 deviation_pct=Decimal("2"), market_value=Decimal("32000"), holdings_count=1),
                     TierSummary(tier=Tier.GAMBLE, target_pct=Decimal("30"), actual_pct=Decimal("30"),
                                 deviation_pct=Decimal("0"), market_value=Decimal("30000"), holdings_count=1),
@@ -336,9 +336,9 @@ class TestWeeklyReportService:
             portfolio_summary=PortfolioSummary(
                 total_value=Decimal("50000"),
                 tiers=[
-                    TierSummary(tier=Tier.STABLE, target_pct=Decimal("40"), actual_pct=Decimal("40"),
+                    TierSummary(tier=Tier.CORE, target_pct=Decimal("40"), actual_pct=Decimal("40"),
                                 deviation_pct=Decimal("0"), market_value=Decimal("20000"), holdings_count=1),
-                    TierSummary(tier=Tier.MEDIUM, target_pct=Decimal("30"), actual_pct=Decimal("30"),
+                    TierSummary(tier=Tier.GROWTH, target_pct=Decimal("30"), actual_pct=Decimal("30"),
                                 deviation_pct=Decimal("0"), market_value=Decimal("15000"), holdings_count=1),
                     TierSummary(tier=Tier.GAMBLE, target_pct=Decimal("30"), actual_pct=Decimal("30"),
                                 deviation_pct=Decimal("0"), market_value=Decimal("15000"), holdings_count=1),

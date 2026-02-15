@@ -16,8 +16,8 @@ class MarketEnum(str, Enum):
 
 class TierEnum(str, Enum):
     """Portfolio tier enum."""
-    STABLE = "stable"
-    MEDIUM = "medium"
+    CORE = "core"
+    GROWTH = "growth"
     GAMBLE = "gamble"
 
 
@@ -57,6 +57,7 @@ class HoldingCreate(HoldingBase):
 
 class HoldingUpdate(BaseModel):
     """Schema for updating a holding."""
+    tier: Optional[TierEnum] = None
     quantity: Optional[Decimal] = Field(None, gt=0)
     avg_cost: Optional[Decimal] = Field(None, gt=0)
     stop_loss_price: Optional[Decimal] = Field(None, gt=0)
@@ -337,3 +338,30 @@ class GeneratedReportDetail(BaseModel):
     content: dict
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ===== Transaction Preview / Position Update Schemas =====
+
+class TransactionPreviewRequest(BaseModel):
+    """Request to preview an inferred transaction from position changes."""
+    new_quantity: Decimal = Field(..., ge=0)
+    new_avg_cost: Decimal = Field(..., gt=0)
+    transaction_date: Optional[datetime] = None
+
+
+class TransactionPreviewResponse(BaseModel):
+    """Response with inferred transaction details."""
+    action: str
+    quantity: Decimal
+    inferred_price: Decimal
+    suggested_date: Optional[str] = None
+    old_quantity: Decimal
+    old_avg_cost: Decimal
+
+
+class PositionUpdateRequest(BaseModel):
+    """Request to update a position with inferred transaction."""
+    new_quantity: Decimal = Field(..., ge=0)
+    new_avg_cost: Decimal = Field(..., gt=0)
+    transaction_date: Optional[datetime] = None
+    reason: Optional[str] = None

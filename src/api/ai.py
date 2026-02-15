@@ -14,7 +14,7 @@ from src.db.models_auth import User
 from src.services.auth import get_current_user
 from src.services.ai_advisor import AIAdvisor
 from src.services.ai_summarizer import AISummarizer
-from src.services.llm_client import LLMClient, LLMError, ModelChoice
+from src.services.llm_client import LLMError
 from src.services.weekly_report import WeeklyReportService
 
 logger = logging.getLogger(__name__)
@@ -31,10 +31,6 @@ class SummarizeRequest(BaseModel):
     max_words: int = 200
     language: str = "zh"
 
-
-class ClassifyTierRequest(BaseModel):
-    symbol: str
-    market: str  # US, HK, CN
 
 
 @router.post("/analyze-holding/{holding_id}")
@@ -119,37 +115,3 @@ async def enhance_report(
         raise HTTPException(status_code=500, detail=f"AI enhance failed: {e}")
 
 
-@router.post("/classify-tier")
-async def classify_tier(request: ClassifyTierRequest):
-    """Use AI to classify a stock into stable/medium/gamble tier.
-
-    - stable: 大盘蓝筹、高股息、低波动ETF、国债等稳健资产
-    - medium: 成长股、行业龙头、主题ETF等中等风险资产
-    - gamble: 小盘股、概念股、高波动个股、加密货币等高风险资产
-    """
-    prompt = f"""你是一个投资组合分类专家。请根据以下股票信息，将其归入三个风险层级之一。
-
-股票代码: {request.symbol}
-市场: {request.market}
-
-三个层级定义：
-- stable: 大盘蓝筹、高股息、低波动ETF、国债类基金、货币基金等稳健资产
-- medium: 成长型龙头、行业ETF、主题基金等中等风险资产
-- gamble: 小盘股、概念股、高波动个股、meme股、加密货币相关等高风险资产
-
-请只回复一个单词: stable、medium 或 gamble。不要解释。"""
-
-    try:
-        client = LLMClient()
-        result = await client.chat_with_system(
-            "你是投资分类助手，只回复分类结果。",
-            prompt,
-            model=ModelChoice.FAST,
-        )
-        tier = result.strip().lower()
-        if tier not in ("stable", "medium", "gamble"):
-            tier = "medium"
-        return {"tier": tier}
-    except (LLMError, Exception) as e:
-        logger.warning("AI tier classification failed: %s, defaulting to medium", e)
-        return {"tier": "medium"}

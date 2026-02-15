@@ -72,7 +72,7 @@ class TestPortfolioAPI:
         client.post("/api/holdings", json={
             "symbol": "VOO",
             "market": "US",
-            "tier": "stable",
+            "tier": "core",
             "quantity": "100.0",
             "avg_cost": "400.00",  # $40,000
             "first_buy_date": "2025-01-01",
@@ -81,7 +81,7 @@ class TestPortfolioAPI:
         client.post("/api/holdings", json={
             "symbol": "QQQ",
             "market": "US",
-            "tier": "medium",
+            "tier": "growth",
             "quantity": "50.0",
             "avg_cost": "600.00",  # $30,000
             "first_buy_date": "2025-01-01",
@@ -106,8 +106,8 @@ class TestPortfolioAPI:
 
         # Check allocations (40/30/30)
         allocations = {a["tier"]: a for a in data["allocations"]}
-        assert Decimal(allocations["stable"]["actual_pct"]) == Decimal("40")
-        assert Decimal(allocations["medium"]["actual_pct"]) == Decimal("30")
+        assert Decimal(allocations["core"]["actual_pct"]) == Decimal("40")
+        assert Decimal(allocations["growth"]["actual_pct"]) == Decimal("30")
         assert Decimal(allocations["gamble"]["actual_pct"]) == Decimal("30")
 
     def test_rebalance_no_suggestions_when_balanced(self, client):
@@ -116,7 +116,7 @@ class TestPortfolioAPI:
         client.post("/api/holdings", json={
             "symbol": "VOO",
             "market": "US",
-            "tier": "stable",
+            "tier": "core",
             "quantity": "100.0",
             "avg_cost": "400.00",
             "first_buy_date": "2025-01-01",
@@ -125,7 +125,7 @@ class TestPortfolioAPI:
         client.post("/api/holdings", json={
             "symbol": "QQQ",
             "market": "US",
-            "tier": "medium",
+            "tier": "growth",
             "quantity": "50.0",
             "avg_cost": "600.00",
             "first_buy_date": "2025-01-01",
@@ -184,12 +184,12 @@ class TestPortfolioAPI:
     def test_portfolio_summary_with_holdings(self, client):
         """Test summary with holdings in each tier."""
         client.post("/api/holdings", json={
-            "symbol": "VOO", "market": "US", "tier": "stable",
+            "symbol": "VOO", "market": "US", "tier": "core",
             "quantity": "100.0", "avg_cost": "400.00",
             "first_buy_date": "2025-01-01", "buy_reason": "S&P 500",
         })
         client.post("/api/holdings", json={
-            "symbol": "QQQ", "market": "US", "tier": "medium",
+            "symbol": "QQQ", "market": "US", "tier": "growth",
             "quantity": "50.0", "avg_cost": "600.00",
             "first_buy_date": "2025-01-01", "buy_reason": "Nasdaq",
         })
@@ -206,10 +206,10 @@ class TestPortfolioAPI:
         assert len(data["tiers"]) == 3
 
         tiers_by_name = {t["tier"]: t for t in data["tiers"]}
-        assert Decimal(tiers_by_name["stable"]["actual_pct"]) == Decimal("40")
-        assert tiers_by_name["stable"]["holdings_count"] == 1
-        assert Decimal(tiers_by_name["stable"]["market_value"]) == Decimal("40000")
-        assert Decimal(tiers_by_name["stable"]["deviation"]) == Decimal("0")
+        assert Decimal(tiers_by_name["core"]["actual_pct"]) == Decimal("40")
+        assert tiers_by_name["core"]["holdings_count"] == 1
+        assert Decimal(tiers_by_name["core"]["market_value"]) == Decimal("40000")
+        assert Decimal(tiers_by_name["core"]["deviation"]) == Decimal("0")
 
     def test_portfolio_summary_deviation(self, client):
         """Test that deviation is calculated correctly."""
@@ -224,7 +224,7 @@ class TestPortfolioAPI:
         data = response.json()
         tiers_by_name = {t["tier"]: t for t in data["tiers"]}
         assert Decimal(tiers_by_name["gamble"]["deviation"]) == Decimal("70")
-        assert Decimal(tiers_by_name["stable"]["deviation"]) == Decimal("-40")
+        assert Decimal(tiers_by_name["core"]["deviation"]) == Decimal("-40")
 
     # ===== Holdings Summary Endpoint Tests =====
 
@@ -237,7 +237,7 @@ class TestPortfolioAPI:
     def test_holdings_summary_with_holdings(self, client):
         """Test holdings summary returns P&L data."""
         client.post("/api/holdings", json={
-            "symbol": "VOO", "market": "US", "tier": "stable",
+            "symbol": "VOO", "market": "US", "tier": "core",
             "quantity": "100.0", "avg_cost": "400.00",
             "first_buy_date": "2025-01-01", "buy_reason": "S&P 500",
         })
@@ -248,7 +248,7 @@ class TestPortfolioAPI:
         assert len(data) == 1
         h = data[0]
         assert h["symbol"] == "VOO"
-        assert h["tier"] == "stable"
+        assert h["tier"] == "core"
         assert Decimal(h["current_price"]) == Decimal("400")  # falls back to avg_cost
         assert Decimal(h["market_value"]) == Decimal("40000")
         assert Decimal(h["pnl"]) == Decimal("0")

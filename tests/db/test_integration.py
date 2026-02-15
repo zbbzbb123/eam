@@ -53,7 +53,7 @@ class TestDatabaseIntegration:
         holding = Holding(
             symbol="AAPL",
             market=Market.US,
-            tier=Tier.STABLE,
+            tier=Tier.CORE,
             quantity=Decimal("100.0"),
             avg_cost=Decimal("175.50"),
             first_buy_date=date(2025, 1, 15),
@@ -69,7 +69,7 @@ class TestDatabaseIntegration:
         assert queried is not None
         assert queried.symbol == "AAPL"
         assert queried.market == Market.US
-        assert queried.tier == Tier.STABLE
+        assert queried.tier == Tier.CORE
         assert queried.quantity == Decimal("100.0")
         assert queried.status == HoldingStatus.ACTIVE
 
@@ -78,7 +78,7 @@ class TestDatabaseIntegration:
         holding = Holding(
             symbol="GOOGL",
             market=Market.US,
-            tier=Tier.MEDIUM,
+            tier=Tier.GROWTH,
             quantity=Decimal("50.0"),
             avg_cost=Decimal("140.00"),
             first_buy_date=date(2025, 1, 10),

@@ -24,15 +24,15 @@ logger = logging.getLogger(__name__)
 
 # Target allocations per tier
 TIER_TARGETS = {
-    Tier.STABLE: Decimal("40"),
-    Tier.MEDIUM: Decimal("30"),
+    Tier.CORE: Decimal("40"),
+    Tier.GROWTH: Decimal("30"),
     Tier.GAMBLE: Decimal("30"),
 }
 
 TIER_LABELS = {
-    Tier.STABLE: "稳健层",
-    Tier.MEDIUM: "中等风险层",
-    Tier.GAMBLE: "Gamble层",
+    Tier.CORE: "核心层",
+    Tier.GROWTH: "成长层",
+    Tier.GAMBLE: "投机层",
 }
 
 SEVERITY_ORDER = {

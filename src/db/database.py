@@ -60,6 +60,42 @@ def _migrate_user_columns():
         pass
 
 
+def _migrate_tier_rename():
+    """Rename tier values: stable→core, medium→growth."""
+    insp = inspect(engine)
+    try:
+        columns = {c["name"]: c for c in insp.get_columns("holdings")}
+    except Exception:
+        return  # Table doesn't exist yet
+
+    if "tier" not in columns:
+        return
+
+    # SQLAlchemy Enum(PythonEnum) uses enum member NAMES (uppercase) as DB values.
+    # Old enum names: STABLE, MEDIUM, GAMBLE → new: CORE, GROWTH, GAMBLE
+    with engine.begin() as conn:
+        # Check if old values exist (case-insensitive in MySQL)
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM holdings WHERE tier IN ('STABLE', 'MEDIUM', 'stable', 'medium')"
+        ))
+        count = result.scalar()
+        if count > 0:
+            # Use VARCHAR as intermediate to avoid MySQL ENUM duplicate-value errors
+            conn.execute(text(
+                "ALTER TABLE holdings MODIFY COLUMN tier VARCHAR(20) NOT NULL"
+            ))
+            conn.execute(text("UPDATE holdings SET tier='CORE' WHERE tier IN ('STABLE','stable')"))
+            conn.execute(text("UPDATE holdings SET tier='GROWTH' WHERE tier IN ('MEDIUM','medium')"))
+            conn.execute(text("UPDATE holdings SET tier='GAMBLE' WHERE tier IN ('GAMBLE','gamble')"))
+            logger.info("Migrated tier values: STABLE→CORE, MEDIUM→GROWTH (%d rows)", count)
+
+        # Finalize enum to new values
+        conn.execute(text(
+            "ALTER TABLE holdings MODIFY COLUMN tier ENUM('CORE','GROWTH','GAMBLE') NOT NULL"
+        ))
+        logger.info("Updated tier enum column definition")
+
+
 def init_db():
     """Create all tables and run migrations."""
     # Import all model modules so they register with Base.metadata
@@ -72,3 +108,4 @@ def init_db():
 
     # Run migrations for existing tables
     _migrate_user_columns()
+    _migrate_tier_rename()

@@ -38,7 +38,7 @@ class TestHoldingModel:
         holding = Holding(
             symbol="VOO",
             market=Market.US,
-            tier=Tier.STABLE,
+            tier=Tier.CORE,
             quantity=Decimal("50.0"),
             avg_cost=Decimal("450.00"),
             first_buy_date=date(2025, 1, 1),

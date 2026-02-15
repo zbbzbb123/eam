@@ -2,7 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import {
   getHoldingsSummary, createHolding, updateHolding, deleteHolding,
-  createTransaction, syncPrices, classifyTier,
+  syncPrices, previewTransaction, updatePosition, getTransactions,
   analyzeHolding, analyzeAllHoldings
 } from '../api'
 import AIAnalysisModal from '../components/AIAnalysisModal.vue'
@@ -22,29 +22,32 @@ const batchLoading = ref(false)
 
 // Add holding modal
 const showAddModal = ref(false)
-const addForm = ref({ symbol: '', market: 'US', quantity: '', avg_cost: '', first_buy_date: '' })
+const addForm = ref({ symbol: '', market: 'US', tier: 'core', quantity: '', avg_cost: '', first_buy_date: '' })
 const addError = ref('')
 const addSubmitting = ref(false)
 
 // Edit holding modal
 const showEditModal = ref(false)
-const editForm = ref({ id: null, quantity: '', avg_cost: '', stop_loss_price: '', take_profit_price: '', notes: '' })
+const editForm = ref({ id: null, quantity: '', avg_cost: '', tier: '', stop_loss_price: '', take_profit_price: '', notes: '', transaction_date: '' })
 const editHolding = ref(null)
 const editError = ref('')
 const editSubmitting = ref(false)
 
-// Transaction modal
-const showTxModal = ref(false)
-const txForm = ref({ action: 'buy', quantity: '', price: '', reason: '' })
-const txHolding = ref(null)
-const txError = ref('')
-const txSubmitting = ref(false)
+// Transaction preview confirmation
+const showPreviewModal = ref(false)
+const previewData = ref(null)
+const previewReason = ref('')
+const previewDate = ref('')
+const previewSubmitting = ref(false)
+
+// Transaction history
+const txHistory = ref([])
+const txHistoryLoading = ref(false)
+const showTxHistory = ref(false)
 
 onMounted(async () => {
-  // Load holdings first, then sync prices in background
   holdings.value = await getHoldingsSummary()
   loading.value = false
-  // Sync prices in background, reload when done
   syncing.value = true
   await syncPrices()
   syncing.value = false
@@ -88,13 +91,13 @@ function pctFmt(v) {
 }
 
 function tierLabel(t) {
-  const map = { stable: '稳健', medium: '成长', gamble: '投机', STABLE: '稳健', MEDIUM: '成长', GAMBLE: '投机' }
+  const map = { core: '核心', growth: '成长', gamble: '投机', CORE: '核心', GROWTH: '成长', GAMBLE: '投机' }
   return map[t] || t
 }
 
 // === Add holding ===
 function openAddModal() {
-  addForm.value = { symbol: '', market: 'US', quantity: '', avg_cost: '', first_buy_date: new Date().toISOString().slice(0, 10) }
+  addForm.value = { symbol: '', market: 'US', tier: 'core', quantity: '', avg_cost: '', first_buy_date: new Date().toISOString().slice(0, 10) }
   addError.value = ''
   showAddModal.value = true
 }
@@ -108,19 +111,16 @@ async function submitAdd() {
   addSubmitting.value = true
   addError.value = ''
   try {
-    // AI classify tier
-    const { tier } = await classifyTier(f.symbol, f.market)
     await createHolding({
       symbol: f.symbol.toUpperCase(),
       market: f.market,
-      tier: tier,
+      tier: f.tier,
       quantity: f.quantity,
       avg_cost: f.avg_cost,
       first_buy_date: f.first_buy_date,
       buy_reason: '手动录入'
     })
     showAddModal.value = false
-    // Sync price for the new holding
     await syncPrices()
     await reload()
   } catch (e) {
@@ -137,11 +137,15 @@ function openEditModal(h) {
     id: h.id,
     quantity: h.quantity,
     avg_cost: h.avg_cost,
+    tier: (h.tier || '').toLowerCase(),
     stop_loss_price: h.stop_loss || '',
     take_profit_price: h.take_profit || '',
-    notes: h.notes || ''
+    notes: h.notes || '',
+    transaction_date: ''
   }
   editError.value = ''
+  showTxHistory.value = false
+  txHistory.value = []
   showEditModal.value = true
 }
 
@@ -149,21 +153,85 @@ async function submitEdit() {
   editSubmitting.value = true
   editError.value = ''
   try {
-    const data = {}
     const f = editForm.value
-    if (f.quantity) data.quantity = String(f.quantity)
-    if (f.avg_cost) data.avg_cost = String(f.avg_cost)
-    if (f.stop_loss_price) data.stop_loss_price = String(f.stop_loss_price)
-    if (f.take_profit_price) data.take_profit_price = String(f.take_profit_price)
-    if (f.notes) data.notes = f.notes
-    await updateHolding(f.id, data)
-    showEditModal.value = false
-    await reload()
+    const h = editHolding.value
+    const qtyChanged = Number(f.quantity) !== Number(h.quantity)
+    const avgChanged = Number(f.avg_cost) !== Number(h.avg_cost)
+
+    if (qtyChanged || avgChanged) {
+      // Position changed → preview transaction
+      const preview = await previewTransaction(f.id, {
+        new_quantity: String(f.quantity),
+        new_avg_cost: String(f.avg_cost),
+        transaction_date: f.transaction_date ? new Date(f.transaction_date).toISOString() : undefined
+      })
+      previewData.value = preview
+      previewReason.value = preview.action === 'buy' ? '加仓' : '减仓'
+      previewDate.value = preview.suggested_date || new Date().toISOString().slice(0, 10)
+      showPreviewModal.value = true
+    } else {
+      // Only settings changed → direct PATCH
+      const data = {}
+      if (f.tier) data.tier = f.tier
+      if (f.stop_loss_price) data.stop_loss_price = String(f.stop_loss_price)
+      else data.stop_loss_price = null
+      if (f.take_profit_price) data.take_profit_price = String(f.take_profit_price)
+      else data.take_profit_price = null
+      data.notes = f.notes || null
+      await updateHolding(f.id, data)
+      showEditModal.value = false
+      await reload()
+    }
   } catch (e) {
-    editError.value = e.response?.data?.detail || '修改失败'
+    editError.value = e.response?.data?.detail || '操作失败'
   } finally {
     editSubmitting.value = false
   }
+}
+
+// === Confirm transaction preview ===
+async function confirmPreview() {
+  previewSubmitting.value = true
+  try {
+    const f = editForm.value
+    await updatePosition(f.id, {
+      new_quantity: String(f.quantity),
+      new_avg_cost: String(f.avg_cost),
+      transaction_date: new Date(previewDate.value).toISOString(),
+      reason: previewReason.value
+    })
+    showPreviewModal.value = false
+
+    // Also update settings if changed
+    const data = {}
+    if (f.tier) data.tier = f.tier
+    if (f.stop_loss_price) data.stop_loss_price = String(f.stop_loss_price)
+    if (f.take_profit_price) data.take_profit_price = String(f.take_profit_price)
+    if (f.notes) data.notes = f.notes
+    if (Object.keys(data).length) {
+      await updateHolding(f.id, data)
+    }
+
+    showEditModal.value = false
+    await reload()
+  } catch (e) {
+    editError.value = e.response?.data?.detail || '更新失败'
+    showPreviewModal.value = false
+  } finally {
+    previewSubmitting.value = false
+  }
+}
+
+// === Transaction history ===
+async function loadTxHistory() {
+  if (showTxHistory.value) {
+    showTxHistory.value = false
+    return
+  }
+  txHistoryLoading.value = true
+  txHistory.value = await getTransactions(editHolding.value.id)
+  txHistoryLoading.value = false
+  showTxHistory.value = true
 }
 
 // === Delete holding ===
@@ -174,39 +242,6 @@ async function onDelete(h) {
     await reload()
   } catch (e) {
     alert('删除失败: ' + (e.response?.data?.detail || e.message))
-  }
-}
-
-// === Transaction ===
-function openTxModal(h, action) {
-  txHolding.value = h
-  txForm.value = { action, quantity: '', price: '', reason: '' }
-  txError.value = ''
-  showTxModal.value = true
-}
-
-async function submitTx() {
-  const f = txForm.value
-  if (!f.quantity || !f.price) {
-    txError.value = '请填写数量和价格'
-    return
-  }
-  txSubmitting.value = true
-  txError.value = ''
-  try {
-    await createTransaction(txHolding.value.id, {
-      action: f.action,
-      quantity: f.quantity,
-      price: f.price,
-      reason: f.reason || (f.action === 'buy' ? '加仓' : '减仓'),
-      transaction_date: new Date().toISOString()
-    })
-    showTxModal.value = false
-    await reload()
-  } catch (e) {
-    txError.value = e.response?.data?.detail || '交易失败'
-  } finally {
-    txSubmitting.value = false
   }
 }
 
@@ -238,9 +273,9 @@ async function onBatchAnalyze() {
     <div class="filters">
       <select v-model="filterTier">
         <option value="">全部分层</option>
-        <option value="STABLE">稳健</option>
-        <option value="MEDIUM">成长</option>
-        <option value="GAMBLE">投机</option>
+        <option value="core">核心</option>
+        <option value="growth">成长</option>
+        <option value="gamble">投机</option>
       </select>
       <select v-model="filterMarket">
         <option value="">全部市场</option>
@@ -288,8 +323,6 @@ async function onBatchAnalyze() {
             <td :class="pnlClass(h.pnl)">{{ fmt(h.pnl) }}</td>
             <td :class="pnlClass(h.pnl_pct)">{{ pctFmt(h.pnl_pct) }}</td>
             <td class="actions">
-              <button class="btn-buy" @click="openTxModal(h, 'buy')">买入</button>
-              <button class="btn-sell" @click="openTxModal(h, 'sell')">卖出</button>
               <button class="btn-edit" @click="openEditModal(h)">编辑</button>
               <button class="btn-del" @click="onDelete(h)">删除</button>
               <button class="ai-btn-sm" @click="onAnalyzeHolding(h)">AI</button>
@@ -303,7 +336,6 @@ async function onBatchAnalyze() {
     <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
       <div class="modal">
         <h2>新增持仓</h2>
-        <p class="modal-hint">分层将由 AI 自动判断</p>
         <div class="form-row">
           <label>股票代码</label>
           <input v-model="addForm.symbol" placeholder="如 AAPL、00700、600519" />
@@ -314,6 +346,14 @@ async function onBatchAnalyze() {
             <option value="US">美股</option>
             <option value="HK">港股</option>
             <option value="CN">A股</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>分层</label>
+          <select v-model="addForm.tier">
+            <option value="core">核心</option>
+            <option value="growth">成长</option>
+            <option value="gamble">投机</option>
           </select>
         </div>
         <div class="form-row">
@@ -332,7 +372,7 @@ async function onBatchAnalyze() {
         <div class="form-actions">
           <button class="btn-cancel" @click="showAddModal = false">取消</button>
           <button class="btn-primary" :disabled="addSubmitting" @click="submitAdd">
-            {{ addSubmitting ? 'AI 分类中...' : '确认录入' }}
+            {{ addSubmitting ? '录入中...' : '确认录入' }}
           </button>
         </div>
       </div>
@@ -340,62 +380,110 @@ async function onBatchAnalyze() {
 
     <!-- 编辑持仓弹窗 -->
     <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
-      <div class="modal">
+      <div class="modal modal-wide">
         <h2>编辑 {{ editHolding?.symbol }}</h2>
-        <div class="form-row">
-          <label>持仓数量</label>
-          <input v-model="editForm.quantity" type="number" min="0" />
+        <div class="form-info">
+          当前持仓：{{ fmt(editHolding?.quantity, 0) }} 股 | 均价：{{ fmt(editHolding?.avg_cost) }}
+        </div>
+
+        <div class="section-label">持仓信息</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>持仓数量</label>
+            <input v-model="editForm.quantity" type="number" min="0" />
+          </div>
+          <div class="form-row">
+            <label>成本均价</label>
+            <input v-model="editForm.avg_cost" type="number" step="0.01" min="0.01" />
+          </div>
         </div>
         <div class="form-row">
-          <label>成本均价</label>
-          <input v-model="editForm.avg_cost" type="number" step="0.01" min="0.01" />
+          <label>交易日期（可选，留空自动推导）</label>
+          <input v-model="editForm.transaction_date" type="date" />
         </div>
+
+        <div class="section-label">设置</div>
         <div class="form-row">
-          <label>止损价</label>
-          <input v-model="editForm.stop_loss_price" type="number" step="0.01" placeholder="可选" />
+          <label>分层</label>
+          <select v-model="editForm.tier">
+            <option value="core">核心</option>
+            <option value="growth">成长</option>
+            <option value="gamble">投机</option>
+          </select>
         </div>
-        <div class="form-row">
-          <label>止盈价</label>
-          <input v-model="editForm.take_profit_price" type="number" step="0.01" placeholder="可选" />
+        <div class="form-grid">
+          <div class="form-row">
+            <label>止损价</label>
+            <input v-model="editForm.stop_loss_price" type="number" step="0.01" placeholder="可选" />
+          </div>
+          <div class="form-row">
+            <label>止盈价</label>
+            <input v-model="editForm.take_profit_price" type="number" step="0.01" placeholder="可选" />
+          </div>
         </div>
         <div class="form-row">
           <label>备注</label>
           <input v-model="editForm.notes" placeholder="可选" />
         </div>
+
+        <!-- Transaction History -->
+        <div class="tx-toggle" @click="loadTxHistory">
+          {{ txHistoryLoading ? '加载中...' : (showTxHistory ? '收起交易明细 ▲' : '查看交易明细 ▼') }}
+        </div>
+        <div v-if="showTxHistory" class="tx-history">
+          <div v-if="!txHistory.length" class="tx-empty">暂无交易记录</div>
+          <div v-for="tx in txHistory" :key="tx.id" class="tx-item">
+            <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? '买入' : '卖出' }}</span>
+            <span>{{ fmt(tx.quantity, 0) }} 股</span>
+            <span>@ {{ fmt(tx.price) }}</span>
+            <span class="tx-date">{{ tx.transaction_date?.slice(0, 10) }}</span>
+            <span class="tx-reason">{{ tx.reason }}</span>
+          </div>
+        </div>
+
         <div v-if="editError" class="form-error">{{ editError }}</div>
         <div class="form-actions">
           <button class="btn-cancel" @click="showEditModal = false">取消</button>
           <button class="btn-primary" :disabled="editSubmitting" @click="submitEdit">
-            {{ editSubmitting ? '保存中...' : '保存' }}
+            {{ editSubmitting ? '处理中...' : '保存' }}
           </button>
         </div>
       </div>
     </div>
 
-    <!-- 交易弹窗 -->
-    <div v-if="showTxModal" class="modal-overlay" @click.self="showTxModal = false">
+    <!-- 交易推导确认弹窗 -->
+    <div v-if="showPreviewModal" class="modal-overlay" @click.self="showPreviewModal = false">
       <div class="modal">
-        <h2>{{ txForm.action === 'buy' ? '买入' : '卖出' }} {{ txHolding?.symbol }}</h2>
-        <div class="form-info">
-          当前持仓：{{ fmt(txHolding?.quantity, 0) }} 股 | 均价：{{ fmt(txHolding?.avg_cost) }}
+        <h2>推导交易确认</h2>
+        <div class="preview-info">
+          <div class="preview-row">
+            <span class="preview-label">类型</span>
+            <span :class="previewData?.action === 'buy' ? 'tx-buy' : 'tx-sell'">
+              {{ previewData?.action === 'buy' ? '买入' : '卖出' }}
+            </span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">数量</span>
+            <span>{{ fmt(previewData?.quantity, 0) }} 股</span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">推导价格</span>
+            <span>{{ fmt(previewData?.inferred_price) }} 元</span>
+          </div>
         </div>
         <div class="form-row">
-          <label>{{ txForm.action === 'buy' ? '买入' : '卖出' }}数量</label>
-          <input v-model="txForm.quantity" type="number" min="1" placeholder="股数" />
+          <label>交易日期</label>
+          <input v-model="previewDate" type="date" />
         </div>
         <div class="form-row">
-          <label>成交价格</label>
-          <input v-model="txForm.price" type="number" step="0.01" min="0.01" placeholder="每股价格" />
+          <label>原因</label>
+          <input v-model="previewReason" :placeholder="previewData?.action === 'buy' ? '加仓' : '减仓'" />
         </div>
-        <div class="form-row">
-          <label>交易备注</label>
-          <input v-model="txForm.reason" :placeholder="txForm.action === 'buy' ? '加仓理由' : '减仓理由'" />
-        </div>
-        <div v-if="txError" class="form-error">{{ txError }}</div>
+        <div v-if="editError" class="form-error">{{ editError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showTxModal = false">取消</button>
-          <button :class="txForm.action === 'buy' ? 'btn-buy-lg' : 'btn-sell-lg'" :disabled="txSubmitting" @click="submitTx">
-            {{ txSubmitting ? '提交中...' : (txForm.action === 'buy' ? '确认买入' : '确认卖出') }}
+          <button class="btn-cancel" @click="showPreviewModal = false">取消</button>
+          <button class="btn-primary" :disabled="previewSubmitting" @click="confirmPreview">
+            {{ previewSubmitting ? '提交中...' : '确认' }}
           </button>
         </div>
       </div>
@@ -426,25 +514,14 @@ async function onBatchAnalyze() {
 .btn-sync:hover:not(:disabled) { filter: brightness(1.15); }
 .btn-sync:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.btn-buy, .btn-sell, .btn-edit, .btn-del {
+.btn-edit, .btn-del {
   border: none; border-radius: 4px; padding: 4px 10px;
   font-size: 12px; cursor: pointer; font-weight: 600; color: #fff;
 }
-.btn-buy { background: #e53935; }
-.btn-sell { background: #43a047; }
 .btn-edit { background: #666; }
 .btn-del { background: #444; color: #f44336; }
-.btn-buy:hover, .btn-sell:hover, .btn-edit:hover { filter: brightness(1.15); }
+.btn-edit:hover { filter: brightness(1.15); }
 .btn-del:hover { background: #f44336; color: #fff; }
-
-.btn-buy-lg, .btn-sell-lg {
-  border: none; border-radius: 6px; padding: 8px 16px;
-  font-size: 13px; cursor: pointer; font-weight: 600; color: #fff;
-}
-.btn-buy-lg { background: #e53935; }
-.btn-sell-lg { background: #43a047; }
-.btn-buy-lg:hover, .btn-sell-lg:hover { filter: brightness(1.15); }
-.btn-buy-lg:disabled, .btn-sell-lg:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn-cancel {
   background: transparent; color: #999; border: 1px solid #444; border-radius: 6px;
@@ -478,8 +555,8 @@ async function onBatchAnalyze() {
   background: #1e1e2e; border-radius: 12px; padding: 28px; width: 420px;
   max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
+.modal-wide { width: 500px; max-height: 85vh; overflow-y: auto; }
 .modal h2 { margin: 0 0 6px; color: #fff; font-size: 18px; }
-.modal-hint { margin: 0 0 16px; color: #888; font-size: 12px; }
 .form-row { margin-bottom: 14px; }
 .form-row label { display: block; color: #aaa; font-size: 13px; margin-bottom: 4px; }
 .form-row input, .form-row select {
@@ -487,7 +564,34 @@ async function onBatchAnalyze() {
   border-radius: 6px; color: #fff; font-size: 14px; box-sizing: border-box;
 }
 .form-row input:focus, .form-row select:focus { border-color: #4fc3f7; outline: none; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 .form-info { background: #2a2a3e; padding: 10px 14px; border-radius: 6px; color: #bbb; font-size: 13px; margin-bottom: 16px; }
 .form-error { color: #ef5350; font-size: 13px; margin-bottom: 12px; }
 .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+.section-label {
+  color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+  margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #333;
+}
+
+/* Preview */
+.preview-info { background: #2a2a3e; padding: 14px; border-radius: 8px; margin-bottom: 16px; }
+.preview-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; color: #ddd; }
+.preview-label { color: #888; }
+
+/* Transaction history */
+.tx-toggle {
+  color: #4fc3f7; font-size: 13px; cursor: pointer; padding: 8px 0; user-select: none;
+}
+.tx-toggle:hover { text-decoration: underline; }
+.tx-history { margin-top: 4px; max-height: 200px; overflow-y: auto; }
+.tx-empty { color: #666; font-size: 13px; padding: 8px 0; }
+.tx-item {
+  display: flex; gap: 10px; align-items: center; padding: 6px 0;
+  font-size: 13px; color: #bbb; border-bottom: 1px solid #2a2a3e;
+}
+.tx-buy { color: #e53935; font-weight: 600; }
+.tx-sell { color: #43a047; font-weight: 600; }
+.tx-date { color: #666; }
+.tx-reason { color: #888; font-size: 12px; }
 </style>
