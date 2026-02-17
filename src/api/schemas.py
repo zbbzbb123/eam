@@ -404,3 +404,30 @@ class DashboardResponse(BaseModel):
     pnl_30d: Decimal
     pnl_30d_pct: Decimal
     tiers: List[DashboardTier]
+
+
+# ===== Trade Date Prediction & Backfill Schemas =====
+
+class TradeDateCandidate(BaseModel):
+    """A candidate trading date for an initial purchase."""
+    trade_date: str          # ISO date
+    close: Decimal
+    low: Decimal
+    high: Decimal
+    confidence: str          # "high", "medium", "low"
+    price_diff_pct: Decimal  # abs((close - avg_cost) / avg_cost * 100)
+
+
+class PredictTradeDateResponse(BaseModel):
+    """Response for trade date prediction."""
+    holding_id: int
+    symbol: str
+    avg_cost: Decimal
+    first_buy_date: str
+    has_transactions: bool   # whether any transactions exist already
+    candidates: List[TradeDateCandidate]
+
+
+class BackfillTransactionRequest(BaseModel):
+    """Request to backfill an initial transaction."""
+    transaction_date: date   # user-confirmed date from candidates

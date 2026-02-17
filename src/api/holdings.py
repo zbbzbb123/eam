@@ -7,18 +7,20 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from src.db.database import get_db, SessionLocal
 from src.db.models import Holding, Transaction, Market, Tier, HoldingStatus, TransactionAction, DailyQuote
 from src.db.models_auth import User
 from src.services.auth import get_current_user
+
 from src.api.schemas import (
     HoldingCreate, HoldingUpdate, HoldingResponse,
     TransactionCreate, TransactionResponse,
     TransactionPreviewRequest, TransactionPreviewResponse,
     PositionUpdateRequest,
-    TierEnum, MarketEnum, HoldingStatusEnum
+    TierEnum, MarketEnum, HoldingStatusEnum,
+    TradeDateCandidate, PredictTradeDateResponse, BackfillTransactionRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,6 +78,120 @@ def _fetch_initial_quotes(symbol: str, market: Market, days: int = 90):
         db.rollback()
     finally:
         db.close()
+
+
+def _has_transactions(holding_id: int, db: Session) -> bool:
+    """Check whether a holding already has any transaction records."""
+    count = db.execute(
+        select(func.count()).select_from(Transaction).where(
+            Transaction.holding_id == holding_id
+        )
+    ).scalar()
+    return count > 0
+
+
+def _fetch_quotes_around_date(symbol: str, market: Market, target_date: date, days: int = 60):
+    """Fetch historical quotes centered on target_date (synchronous, uses its own DB session)."""
+    db = SessionLocal()
+    try:
+        today = date.today()
+        start = target_date - timedelta(days=days)
+        end = min(target_date + timedelta(days=days), today)
+
+        if market in (Market.CN, Market.HK):
+            from src.collectors.structured.akshare_collector import AkShareCollector
+            quotes = AkShareCollector().fetch_quotes(symbol, start, end, market.value)
+        else:
+            from src.collectors.structured.yfinance_collector import YFinanceCollector
+            quotes = YFinanceCollector().fetch_quotes(symbol, start, end)
+
+        upserted = 0
+        for q in quotes:
+            existing = db.query(DailyQuote).filter(
+                DailyQuote.symbol == symbol,
+                DailyQuote.market == market,
+                DailyQuote.trade_date == q.trade_date,
+            ).first()
+            if existing:
+                existing.open = q.open
+                existing.high = q.high
+                existing.low = q.low
+                existing.close = q.close
+                existing.volume = q.volume
+            else:
+                db.add(DailyQuote(
+                    symbol=symbol, market=market, trade_date=q.trade_date,
+                    open=q.open, high=q.high, low=q.low, close=q.close, volume=q.volume,
+                ))
+            upserted += 1
+        db.commit()
+        logger.info(f"Quotes around {target_date}: upserted {upserted} rows for {symbol} ({market.value})")
+    except Exception as e:
+        logger.warning(f"Failed to fetch quotes around {target_date} for {symbol}: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _find_trade_date_candidates(holding: Holding, db: Session) -> List[TradeDateCandidate]:
+    """Find candidate trading dates near first_buy_date where avg_cost matches price data."""
+    avg_cost = holding.avg_cost
+    first_buy = holding.first_buy_date
+    window_start = first_buy - timedelta(days=45)  # ~30 trading days
+    window_end = first_buy + timedelta(days=45)
+
+    quotes = db.execute(
+        select(DailyQuote).where(
+            DailyQuote.symbol == holding.symbol,
+            DailyQuote.market == holding.market,
+            DailyQuote.trade_date >= window_start,
+            DailyQuote.trade_date <= window_end,
+        ).order_by(DailyQuote.trade_date)
+    ).scalars().all()
+
+    # If no quotes exist around first_buy_date, fetch them and retry
+    if not quotes:
+        _fetch_quotes_around_date(holding.symbol, holding.market, first_buy)
+        quotes = db.execute(
+            select(DailyQuote).where(
+                DailyQuote.symbol == holding.symbol,
+                DailyQuote.market == holding.market,
+                DailyQuote.trade_date >= window_start,
+                DailyQuote.trade_date <= window_end,
+            ).order_by(DailyQuote.trade_date)
+        ).scalars().all()
+
+    candidates = []
+    for q in quotes:
+        if q.close is None or q.low is None or q.high is None:
+            continue
+
+        closeness = abs(q.close - avg_cost) / avg_cost if avg_cost else Decimal("999")
+        price_diff_pct = closeness * 100
+
+        if q.low <= avg_cost <= q.high:
+            confidence = "high"
+        elif closeness < Decimal("0.03"):
+            confidence = "medium"
+        elif closeness < Decimal("0.08"):
+            confidence = "low"
+        else:
+            continue  # skip quotes outside 8% threshold
+
+        candidates.append(TradeDateCandidate(
+            trade_date=q.trade_date.isoformat(),
+            close=q.close,
+            low=q.low,
+            high=q.high,
+            confidence=confidence,
+            price_diff_pct=round(price_diff_pct, 2),
+        ))
+
+    # Sort: confidence desc (high > medium > low), then closeness asc
+    confidence_order = {"high": 0, "medium": 1, "low": 2}
+    candidates.sort(key=lambda c: (confidence_order[c.confidence], c.price_diff_pct))
+
+    return candidates[:5]
 
 
 @router.post("", response_model=HoldingResponse, status_code=status.HTTP_201_CREATED)
@@ -416,3 +532,69 @@ def update_position(
     db.commit()
     db.refresh(holding)
     return holding
+
+
+# ===== Trade Date Prediction & Backfill Endpoints =====
+
+@router.get("/{holding_id}/predict-trade-date", response_model=PredictTradeDateResponse)
+def predict_trade_date(
+    holding_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Predict the most likely trading date for a holding's initial purchase."""
+    holding = db.get(Holding, holding_id)
+    if not holding or holding.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Holding {holding_id} not found"
+        )
+
+    candidates = _find_trade_date_candidates(holding, db)
+    has_tx = _has_transactions(holding_id, db)
+
+    return PredictTradeDateResponse(
+        holding_id=holding.id,
+        symbol=holding.symbol,
+        avg_cost=holding.avg_cost,
+        first_buy_date=holding.first_buy_date.isoformat(),
+        has_transactions=has_tx,
+        candidates=candidates,
+    )
+
+
+@router.post("/{holding_id}/backfill-initial-transaction", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
+def backfill_initial_transaction(
+    holding_id: int,
+    req: BackfillTransactionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Backfill an initial BUY transaction for a holding that has none."""
+    holding = db.get(Holding, holding_id)
+    if not holding or holding.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Holding {holding_id} not found"
+        )
+
+    if _has_transactions(holding_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This holding already has transaction records"
+        )
+
+    total_amount = holding.quantity * holding.avg_cost
+    db_tx = Transaction(
+        holding_id=holding_id,
+        action=TransactionAction.BUY,
+        quantity=holding.quantity,
+        price=holding.avg_cost,
+        total_amount=total_amount,
+        reason="Initial purchase",
+        transaction_date=datetime.combine(req.transaction_date, datetime.min.time()),
+    )
+    db.add(db_tx)
+    db.commit()
+    db.refresh(db_tx)
+    return db_tx
