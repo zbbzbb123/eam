@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from src.db.database import get_db
 from src.db.models import Holding, Tier, HoldingStatus, DailyQuote, Market
+from src.db.models_market_data import MarketIndicatorSnapshot
 from src.db.models_auth import User
 from src.services.auth import get_current_user
 from src.api.schemas import (
@@ -40,6 +41,30 @@ def _cache_get(key: str):
 def _cache_set(key: str, value):
     """Set value in cache with TTL."""
     _cache[key] = (value, time.time() + CACHE_TTL)
+
+HKD_CNY_RATE = Decimal("0.93")
+
+
+def _get_usd_cny_rate(db: Session) -> Decimal:
+    """Get latest USD/CNY rate from MarketIndicatorSnapshot."""
+    row = db.query(MarketIndicatorSnapshot).filter(
+        MarketIndicatorSnapshot.symbol == "CNY=X"
+    ).order_by(MarketIndicatorSnapshot.date.desc()).first()
+    if row and row.value:
+        return Decimal(str(row.value))
+    return Decimal("7.25")
+
+
+def _to_cny(value: Decimal, market: Market, usd_rate: Decimal) -> Decimal:
+    """Convert a value in local currency to CNY."""
+    if market == Market.CN:
+        return value
+    if market == Market.US:
+        return value * usd_rate
+    if market == Market.HK:
+        return value * HKD_CNY_RATE
+    return value
+
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -97,12 +122,13 @@ def get_portfolio_overview(
             holdings_count=0,
         )
 
-    # Calculate market values by tier
+    # Calculate market values by tier (converted to CNY)
+    usd_rate = _get_usd_cny_rate(db)
     tier_values = {tier: Decimal("0") for tier in Tier}
 
     for holding in holdings:
         # For MVP, use avg_cost as price estimate
-        market_value = holding.quantity * holding.avg_cost
+        market_value = _to_cny(holding.quantity * holding.avg_cost, holding.market, usd_rate)
         tier_values[holding.tier] += market_value
 
     total_value = sum(tier_values.values())
@@ -210,11 +236,12 @@ def get_portfolio_summary(
             ))
         return PortfolioSummaryResponse(total_value=Decimal("0"), tiers=tiers)
 
-    # Calculate values using current prices
+    # Calculate values using current prices (converted to CNY)
+    usd_rate = _get_usd_cny_rate(db)
     holding_values = {}
     for h in holdings:
         price = _get_current_price(h, db)
-        holding_values[h.id] = h.quantity * price
+        holding_values[h.id] = _to_cny(h.quantity * price, h.market, usd_rate)
 
     total_value = sum(holding_values.values())
 
@@ -291,11 +318,12 @@ def get_holdings_summary(
     # Batch fetch names
     names = _get_stock_names(holdings)
 
+    usd_rate = _get_usd_cny_rate(db)
     result = []
     for h in holdings:
         current_price = _get_current_price(h, db)
-        market_value = h.quantity * current_price
-        cost_basis = h.quantity * h.avg_cost
+        market_value = _to_cny(h.quantity * current_price, h.market, usd_rate)
+        cost_basis = _to_cny(h.quantity * h.avg_cost, h.market, usd_rate)
         pnl = market_value - cost_basis
         pnl_pct = (pnl / cost_basis * 100) if cost_basis else Decimal("0")
 
@@ -487,29 +515,31 @@ def get_dashboard(
         )
 
     names = _get_stock_names(holdings)
+    usd_rate = _get_usd_cny_rate(db)
 
-    # Pre-compute per-holding data
+    # Pre-compute per-holding data (values converted to CNY)
     holding_data = []
     for h in holdings:
         current_price = _get_current_price(h, db)
-        market_value = h.quantity * current_price
+        fx = lambda v, m=h.market: _to_cny(v, m, usd_rate)
+        market_value = fx(h.quantity * current_price)
 
         ref_7d = _get_ref_price(h, db, 7)
-        pnl_7d = (current_price - ref_7d) * h.quantity
+        pnl_7d = fx((current_price - ref_7d) * h.quantity)
         pnl_7d_pct = ((current_price - ref_7d) / ref_7d * 100) if ref_7d else Decimal("0")
 
         ref_30d = _get_ref_price(h, db, 30)
-        pnl_30d = (current_price - ref_30d) * h.quantity
+        pnl_30d = fx((current_price - ref_30d) * h.quantity)
         pnl_30d_pct = ((current_price - ref_30d) / ref_30d * 100) if ref_30d else Decimal("0")
 
         holding_data.append({
             "holding": h,
             "current_price": current_price,
             "market_value": market_value,
-            "ref_7d_value": ref_7d * h.quantity,
+            "ref_7d_value": fx(ref_7d * h.quantity),
             "pnl_7d": pnl_7d,
             "pnl_7d_pct": pnl_7d_pct,
-            "ref_30d_value": ref_30d * h.quantity,
+            "ref_30d_value": fx(ref_30d * h.quantity),
             "pnl_30d": pnl_30d,
             "pnl_30d_pct": pnl_30d_pct,
         })
