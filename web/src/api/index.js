@@ -150,6 +150,14 @@ export function getTransactions(holdingId) {
   return safe(api.get(`/holdings/${holdingId}/transactions`), [])
 }
 
+export function predictTradeDate(holdingId) {
+  return api.get(`/holdings/${holdingId}/predict-trade-date`, { timeout: 30000 }).then(r => r.data)
+}
+
+export function backfillInitialTransaction(holdingId, data) {
+  return api.post(`/holdings/${holdingId}/backfill-initial-transaction`, data).then(r => r.data)
+}
+
 // === Pre-generated report endpoints ===
 export function getDailyReportList(limit = 10) {
   return safe(api.get('/reports/daily/list', { params: { limit } }), [])

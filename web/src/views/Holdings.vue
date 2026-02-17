@@ -3,7 +3,8 @@ import { ref, onMounted, computed } from 'vue'
 import {
   getHoldingsSummary, createHolding, updateHolding, deleteHolding,
   syncPrices, previewTransaction, updatePosition, getTransactions,
-  createTransaction, analyzeHolding, analyzeAllHoldings
+  createTransaction, analyzeHolding, analyzeAllHoldings,
+  predictTradeDate, backfillInitialTransaction
 } from '../api'
 import AIAnalysisModal from '../components/AIAnalysisModal.vue'
 
@@ -46,6 +47,14 @@ const txHistoryLoading = ref(false)
 const showTxHistory = ref(false)
 const showTxModal = ref(false)
 const txModalSymbol = ref('')
+
+// Backfill state
+const editHoldingNoTx = ref(false)
+const backfillPredicting = ref(false)
+const backfillCandidates = ref([])
+const backfillSelectedDate = ref('')
+const backfillSubmitting = ref(false)
+const backfillError = ref('')
 
 // Add transaction form
 const showAddTx = ref(false)
@@ -155,7 +164,16 @@ function openEditModal(h) {
   editError.value = ''
   showTxHistory.value = false
   txHistory.value = []
+  // Reset backfill state
+  editHoldingNoTx.value = false
+  backfillCandidates.value = []
+  backfillSelectedDate.value = ''
+  backfillError.value = ''
   showEditModal.value = true
+  // Check for transactions asynchronously
+  getTransactions(h.id).then(txs => {
+    editHoldingNoTx.value = txs.length === 0
+  })
 }
 
 async function submitEdit() {
@@ -286,6 +304,43 @@ async function submitAddTx() {
     addTxError.value = e.response?.data?.detail || 'Failed to add'
   } finally {
     addTxSubmitting.value = false
+  }
+}
+
+// === Backfill ===
+async function onPredictTradeDate() {
+  backfillPredicting.value = true
+  backfillCandidates.value = []
+  backfillSelectedDate.value = ''
+  backfillError.value = ''
+  try {
+    const result = await predictTradeDate(editForm.value.id)
+    backfillCandidates.value = result.candidates || []
+    if (!backfillCandidates.value.length) {
+      backfillError.value = 'No candidate dates found'
+    }
+  } catch (e) {
+    backfillError.value = e.response?.data?.detail || 'Prediction failed'
+  } finally {
+    backfillPredicting.value = false
+  }
+}
+
+async function onConfirmBackfill() {
+  backfillSubmitting.value = true
+  backfillError.value = ''
+  try {
+    await backfillInitialTransaction(editForm.value.id, { transaction_date: backfillSelectedDate.value })
+    editHoldingNoTx.value = false
+    backfillCandidates.value = []
+    // Refresh transaction history if visible
+    if (showTxHistory.value) {
+      txHistory.value = await getTransactions(editForm.value.id)
+    }
+  } catch (e) {
+    backfillError.value = e.response?.data?.detail || 'Backfill failed'
+  } finally {
+    backfillSubmitting.value = false
   }
 }
 
@@ -440,6 +495,33 @@ async function onBatchAnalyze() {
         <h2>Edit {{ editHolding?.symbol }}</h2>
         <div class="form-info">
           Position: {{ fmt(editHolding?.quantity, 0) }} shares | Avg: {{ fmt(editHolding?.avg_cost) }}
+        </div>
+
+        <!-- Backfill warning for holdings with no transactions -->
+        <div v-if="editHoldingNoTx" class="backfill-warning">
+          <span>This holding has no transaction records.</span>
+          <button class="btn-predict" @click="onPredictTradeDate" :disabled="backfillPredicting">
+            {{ backfillPredicting ? 'Scanning...' : 'Predict Trade Date' }}
+          </button>
+        </div>
+
+        <div v-if="backfillCandidates.length" class="backfill-candidates">
+          <div class="section-label">Candidate Trade Dates</div>
+          <div v-for="c in backfillCandidates" :key="c.trade_date"
+               class="candidate-item" :class="{ selected: backfillSelectedDate === c.trade_date }"
+               @click="backfillSelectedDate = c.trade_date">
+            <span class="candidate-date">{{ c.trade_date }}</span>
+            <span class="badge" :class="'badge-' + c.confidence">{{ c.confidence }}</span>
+            <span class="candidate-price">Close: {{ fmt(c.close) }}</span>
+            <span class="candidate-range">Range: {{ fmt(c.low) }} - {{ fmt(c.high) }}</span>
+            <span class="candidate-diff">Diff: {{ fmt(c.price_diff_pct) }}%</span>
+          </div>
+          <div v-if="backfillSelectedDate" class="form-actions" style="margin-top:10px">
+            <button class="btn-primary" :disabled="backfillSubmitting" @click="onConfirmBackfill">
+              {{ backfillSubmitting ? 'Creating...' : 'Create Initial Transaction' }}
+            </button>
+          </div>
+          <div v-if="backfillError" class="form-error">{{ backfillError }}</div>
         </div>
 
         <div class="section-label">Position</div>
@@ -754,4 +836,29 @@ async function onBatchAnalyze() {
 .add-tx-form {
   margin-top: 8px; padding: 14px; background: #2a2a3e; border-radius: 8px;
 }
+
+/* Backfill */
+.backfill-warning {
+  background: #3e2723; border: 1px solid #ff8a65; border-radius: 8px;
+  padding: 12px 16px; margin-bottom: 16px; display: flex;
+  align-items: center; justify-content: space-between; gap: 12px;
+  color: #ffab91; font-size: 13px;
+}
+.btn-predict {
+  background: #ff9800; color: #fff; border: none; border-radius: 6px;
+  padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+.btn-predict:disabled { opacity: 0.6; cursor: not-allowed; }
+.backfill-candidates { margin-bottom: 16px; }
+.candidate-item {
+  display: flex; gap: 10px; align-items: center; padding: 8px 12px;
+  background: #2a2a3e; border-radius: 6px; margin-bottom: 4px;
+  cursor: pointer; border: 1px solid transparent; font-size: 13px; color: #bbb;
+}
+.candidate-item.selected { border-color: #4fc3f7; background: #1e3a5f; }
+.candidate-item:hover { background: #333; }
+.badge-high { background: #1b5e20; color: #a5d6a7; }
+.badge-medium { background: #e65100; color: #ffcc80; }
+.badge-low { background: #444; color: #999; }
 </style>
