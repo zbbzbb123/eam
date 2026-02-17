@@ -152,6 +152,7 @@ def _find_trade_date_candidates(holding: Holding, db: Session) -> List[TradeDate
     # If no quotes exist around first_buy_date, fetch them and retry
     if not quotes:
         _fetch_quotes_around_date(holding.symbol, holding.market, first_buy)
+        db.expire_all()  # Ensure fresh read after external commit
         quotes = db.execute(
             select(DailyQuote).where(
                 DailyQuote.symbol == holding.symbol,

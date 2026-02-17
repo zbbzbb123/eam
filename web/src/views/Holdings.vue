@@ -337,6 +337,7 @@ async function onConfirmBackfill() {
     if (showTxHistory.value) {
       txHistory.value = await getTransactions(editForm.value.id)
     }
+    await reload()
   } catch (e) {
     backfillError.value = e.response?.data?.detail || 'Backfill failed'
   } finally {
@@ -521,8 +522,8 @@ async function onBatchAnalyze() {
               {{ backfillSubmitting ? 'Creating...' : 'Create Initial Transaction' }}
             </button>
           </div>
-          <div v-if="backfillError" class="form-error">{{ backfillError }}</div>
         </div>
+        <div v-if="backfillError" class="form-error">{{ backfillError }}</div>
 
         <div class="section-label">Position</div>
         <div class="form-grid">
