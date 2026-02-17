@@ -1,7 +1,7 @@
 """Portfolio API endpoints."""
 import logging
 import time
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Dict, Any
 
@@ -17,6 +17,7 @@ from src.api.schemas import (
     PortfolioOverview, TierAllocation, TierEnum,
     PortfolioSummaryResponse, TierSummaryResponse,
     HoldingSummaryResponse,
+    DashboardResponse, DashboardTier, DashboardHoldingItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -425,3 +426,150 @@ def sync_prices(
 
     db.commit()
     return {"synced": synced, "errors": errors}
+
+
+def _get_ref_price(holding: Holding, db: Session, days: int) -> Decimal:
+    """Get reference price N days ago for P&L calculation.
+
+    If holding was bought within the last N days, use avg_cost.
+    Otherwise, use the closest DailyQuote close on or before (today - days).
+    Falls back to avg_cost if no quote found.
+    """
+    today = date.today()
+    ref_date = today - timedelta(days=days)
+
+    if holding.first_buy_date > ref_date:
+        return holding.avg_cost
+
+    quote = (
+        db.query(DailyQuote)
+        .filter(
+            DailyQuote.symbol == holding.symbol,
+            DailyQuote.market == holding.market,
+            DailyQuote.trade_date <= ref_date,
+        )
+        .order_by(DailyQuote.trade_date.desc())
+        .first()
+    )
+    if quote and quote.close:
+        return quote.close
+    return holding.avg_cost
+
+
+@router.get("/dashboard", response_model=DashboardResponse)
+def get_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get full dashboard data: tiers with holdings and 7d/30d P&L."""
+    holdings = db.execute(
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == current_user.id,
+        )
+        .order_by(Holding.tier, Holding.symbol)
+    ).scalars().all()
+
+    if not holdings:
+        empty_tiers = []
+        for tier_val in ["core", "growth", "gamble"]:
+            empty_tiers.append(DashboardTier(
+                tier=tier_val, market_value=Decimal("0"), weight_pct=Decimal("0"),
+                pnl_7d=Decimal("0"), pnl_7d_pct=Decimal("0"),
+                pnl_30d=Decimal("0"), pnl_30d_pct=Decimal("0"),
+                holdings=[],
+            ))
+        return DashboardResponse(
+            total_value=Decimal("0"),
+            pnl_7d=Decimal("0"), pnl_7d_pct=Decimal("0"),
+            pnl_30d=Decimal("0"), pnl_30d_pct=Decimal("0"),
+            tiers=empty_tiers,
+        )
+
+    names = _get_stock_names(holdings)
+
+    # Pre-compute per-holding data
+    holding_data = []
+    for h in holdings:
+        current_price = _get_current_price(h, db)
+        market_value = h.quantity * current_price
+
+        ref_7d = _get_ref_price(h, db, 7)
+        pnl_7d = (current_price - ref_7d) * h.quantity
+        pnl_7d_pct = ((current_price - ref_7d) / ref_7d * 100) if ref_7d else Decimal("0")
+
+        ref_30d = _get_ref_price(h, db, 30)
+        pnl_30d = (current_price - ref_30d) * h.quantity
+        pnl_30d_pct = ((current_price - ref_30d) / ref_30d * 100) if ref_30d else Decimal("0")
+
+        holding_data.append({
+            "holding": h,
+            "current_price": current_price,
+            "market_value": market_value,
+            "ref_7d_value": ref_7d * h.quantity,
+            "pnl_7d": pnl_7d,
+            "pnl_7d_pct": pnl_7d_pct,
+            "ref_30d_value": ref_30d * h.quantity,
+            "pnl_30d": pnl_30d,
+            "pnl_30d_pct": pnl_30d_pct,
+        })
+
+    total_value = sum(d["market_value"] for d in holding_data)
+
+    # Group by tier
+    tier_order = [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]
+    tiers = []
+    total_pnl_7d = Decimal("0")
+    total_ref_7d = Decimal("0")
+    total_pnl_30d = Decimal("0")
+    total_ref_30d = Decimal("0")
+
+    for tier in tier_order:
+        tier_holdings = [d for d in holding_data if d["holding"].tier == tier]
+        tier_mv = sum(d["market_value"] for d in tier_holdings)
+        tier_pnl_7d = sum(d["pnl_7d"] for d in tier_holdings)
+        tier_ref_7d = sum(d["ref_7d_value"] for d in tier_holdings)
+        tier_pnl_30d = sum(d["pnl_30d"] for d in tier_holdings)
+        tier_ref_30d = sum(d["ref_30d_value"] for d in tier_holdings)
+
+        total_pnl_7d += tier_pnl_7d
+        total_ref_7d += tier_ref_7d
+        total_pnl_30d += tier_pnl_30d
+        total_ref_30d += tier_ref_30d
+
+        items = []
+        for d in tier_holdings:
+            h = d["holding"]
+            items.append(DashboardHoldingItem(
+                id=h.id,
+                symbol=h.symbol,
+                name=names.get(h.symbol, ""),
+                market=h.market.value,
+                current_price=round(d["current_price"], 4),
+                market_value=round(d["market_value"], 2),
+                weight_in_tier=round(d["market_value"] / tier_mv * 100, 2) if tier_mv else Decimal("0"),
+                pnl_7d=round(d["pnl_7d"], 2),
+                pnl_7d_pct=round(d["pnl_7d_pct"], 2),
+                pnl_30d=round(d["pnl_30d"], 2),
+                pnl_30d_pct=round(d["pnl_30d_pct"], 2),
+            ))
+
+        tiers.append(DashboardTier(
+            tier=tier.value,
+            market_value=round(tier_mv, 2),
+            weight_pct=round(tier_mv / total_value * 100, 2) if total_value else Decimal("0"),
+            pnl_7d=round(tier_pnl_7d, 2),
+            pnl_7d_pct=round(tier_pnl_7d / tier_ref_7d * 100, 2) if tier_ref_7d else Decimal("0"),
+            pnl_30d=round(tier_pnl_30d, 2),
+            pnl_30d_pct=round(tier_pnl_30d / tier_ref_30d * 100, 2) if tier_ref_30d else Decimal("0"),
+            holdings=items,
+        ))
+
+    return DashboardResponse(
+        total_value=round(total_value, 2),
+        pnl_7d=round(total_pnl_7d, 2),
+        pnl_7d_pct=round(total_pnl_7d / total_ref_7d * 100, 2) if total_ref_7d else Decimal("0"),
+        pnl_30d=round(total_pnl_30d, 2),
+        pnl_30d_pct=round(total_pnl_30d / total_ref_30d * 100, 2) if total_ref_30d else Decimal("0"),
+        tiers=tiers,
+    )

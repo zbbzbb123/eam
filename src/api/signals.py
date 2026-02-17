@@ -59,6 +59,7 @@ def list_signals(
     sector: Optional[str] = None,
     min_severity: Optional[SignalSeverityEnum] = None,
     status: Optional[SignalStatusEnum] = Query(None, alias="status"),
+    since: Optional[datetime] = Query(None),
     limit: int = Query(50, le=200),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -76,6 +77,8 @@ def list_signals(
         min_level = SEVERITY_ORDER[SignalSeverity[min_severity.value.upper()]]
         valid_severities = [s for s, level in SEVERITY_ORDER.items() if level >= min_level]
         query = query.where(Signal.severity.in_(valid_severities))
+    if since:
+        query = query.where(Signal.created_at >= since)
 
     query = query.order_by(Signal.created_at.desc()).limit(limit)
 

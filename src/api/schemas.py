@@ -365,3 +365,42 @@ class PositionUpdateRequest(BaseModel):
     new_avg_cost: Decimal = Field(..., gt=0)
     transaction_date: Optional[datetime] = None
     reason: Optional[str] = None
+
+
+# ===== Dashboard Schemas =====
+
+class DashboardHoldingItem(BaseModel):
+    """Single holding within a dashboard tier."""
+    id: int
+    symbol: str
+    name: str = ""
+    market: MarketEnum
+    current_price: Decimal
+    market_value: Decimal
+    weight_in_tier: Decimal      # % within tier
+    pnl_7d: Decimal
+    pnl_7d_pct: Decimal
+    pnl_30d: Decimal
+    pnl_30d_pct: Decimal
+
+
+class DashboardTier(BaseModel):
+    """Tier summary for dashboard."""
+    tier: str
+    market_value: Decimal
+    weight_pct: Decimal          # % of total portfolio
+    pnl_7d: Decimal
+    pnl_7d_pct: Decimal
+    pnl_30d: Decimal
+    pnl_30d_pct: Decimal
+    holdings: List[DashboardHoldingItem]
+
+
+class DashboardResponse(BaseModel):
+    """Full dashboard response."""
+    total_value: Decimal
+    pnl_7d: Decimal
+    pnl_7d_pct: Decimal
+    pnl_30d: Decimal
+    pnl_30d_pct: Decimal
+    tiers: List[DashboardTier]

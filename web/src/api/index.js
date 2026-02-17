@@ -73,6 +73,10 @@ export function getHoldingsSummary() {
   return safe(api.get('/portfolio/holdings-summary'), [])
 }
 
+export function getDashboard() {
+  return safe(api.get('/portfolio/dashboard'), { total_value: 0, tiers: [] })
+}
+
 export function getHoldings(params = {}) {
   return safe(api.get('/holdings', { params }), [])
 }
