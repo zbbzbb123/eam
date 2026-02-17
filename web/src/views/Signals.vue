@@ -24,13 +24,13 @@ const filtered = computed(() => {
 <template>
   <div>
     <div class="page-header">
-      <h1>信号中心</h1>
-      <p>系统生成的投资信号与风险提醒</p>
+      <h1>Signals</h1>
+      <p>System-generated signals & risk alerts</p>
     </div>
 
     <div class="filters">
       <select v-model="filterSeverity">
-        <option value="">全部级别</option>
+        <option value="">All Severity</option>
         <option value="CRITICAL">CRITICAL</option>
         <option value="HIGH">HIGH</option>
         <option value="MEDIUM">MEDIUM</option>
@@ -38,17 +38,17 @@ const filtered = computed(() => {
         <option value="INFO">INFO</option>
       </select>
       <select v-model="filterStatus">
-        <option value="">全部状态</option>
+        <option value="">All Status</option>
         <option value="NEW">NEW</option>
         <option value="ACKNOWLEDGED">ACKNOWLEDGED</option>
         <option value="RESOLVED">RESOLVED</option>
       </select>
     </div>
 
-    <div v-if="loading" class="loading">加载中</div>
+    <div v-if="loading" class="loading">Loading</div>
 
     <template v-else>
-      <div v-if="!filtered.length" class="empty">暂无信号</div>
+      <div v-if="!filtered.length" class="empty">No signals</div>
       <SignalCard v-for="(s, i) in filtered" :key="i" :signal="s" />
     </template>
   </div>

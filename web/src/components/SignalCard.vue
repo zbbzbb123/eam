@@ -7,7 +7,7 @@ function severityClass(s) {
 
 function formatTime(t) {
   if (!t) return ''
-  return new Date(t).toLocaleString('zh-CN')
+  return new Date(t).toLocaleString('en-US')
 }
 </script>
 

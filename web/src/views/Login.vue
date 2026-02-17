@@ -15,11 +15,11 @@ async function onSubmit() {
   error.value = ''
   const { username, password, invitation_code } = form.value
   if (!username || !password) {
-    error.value = '请填写用户名和密码'
+    error.value = 'Please enter username and password'
     return
   }
   if (activeTab.value === 'register' && !invitation_code) {
-    error.value = '请填写邀请码'
+    error.value = 'Please enter invitation code'
     return
   }
   submitting.value = true
@@ -30,7 +30,7 @@ async function onSubmit() {
     setAuth(data.token, { user_id: data.user_id, username: data.username, is_admin: data.is_admin })
     router.push('/')
   } catch (e) {
-    error.value = e.response?.data?.detail || (activeTab.value === 'login' ? '登录失败' : '注册失败')
+    error.value = e.response?.data?.detail || (activeTab.value === 'login' ? 'Login failed' : 'Registration failed')
   } finally {
     submitting.value = false
   }
@@ -46,32 +46,32 @@ function switchTab(tab) {
   <div class="login-page">
     <div class="login-card">
       <div class="login-logo">
-        <span>EAM</span> 投资系统
+        <span>CGG</span> Alpha Strategy Engine
       </div>
 
       <div class="tab-bar">
-        <button :class="['tab-btn', { active: activeTab === 'login' }]" @click="switchTab('login')">登录</button>
-        <button :class="['tab-btn', { active: activeTab === 'register' }]" @click="switchTab('register')">注册</button>
+        <button :class="['tab-btn', { active: activeTab === 'login' }]" @click="switchTab('login')">Login</button>
+        <button :class="['tab-btn', { active: activeTab === 'register' }]" @click="switchTab('register')">Register</button>
       </div>
 
       <form @submit.prevent="onSubmit">
         <div class="form-row">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="请输入用户名" autocomplete="username" />
+          <label>Username</label>
+          <input v-model="form.username" type="text" placeholder="Enter username" autocomplete="username" />
         </div>
         <div class="form-row">
-          <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="请输入密码" autocomplete="current-password" />
+          <label>Password</label>
+          <input v-model="form.password" type="password" placeholder="Enter password" autocomplete="current-password" />
         </div>
         <div v-if="activeTab === 'register'" class="form-row">
-          <label>邀请码</label>
-          <input v-model="form.invitation_code" type="text" placeholder="请输入邀请码" />
+          <label>Invitation Code</label>
+          <input v-model="form.invitation_code" type="text" placeholder="Enter invitation code" />
         </div>
 
         <div v-if="error" class="form-error">{{ error }}</div>
 
         <button class="submit-btn" type="submit" :disabled="submitting">
-          {{ submitting ? '请稍候...' : (activeTab === 'login' ? '登录' : '注册') }}
+          {{ submitting ? 'Please wait...' : (activeTab === 'login' ? 'Login' : 'Register') }}
         </button>
       </form>
     </div>

@@ -42,7 +42,7 @@ const filtered = computed(() => {
 const grouped = computed(() => {
   const groups = {}
   for (const item of filtered.value) {
-    const key = item.theme || '未分类'
+    const key = item.theme || 'Uncategorized'
     if (!groups[key]) groups[key] = []
     groups[key].push(item)
   }
@@ -50,7 +50,7 @@ const grouped = computed(() => {
 })
 
 function marketLabel(m) {
-  return { US: '美股', HK: '港股', CN: 'A股' }[m] || m
+  return { US: 'US', HK: 'HK', CN: 'CN' }[m] || m
 }
 
 function formatDate(d) {
@@ -67,20 +67,20 @@ function openAddModal() {
 
 async function submitAdd() {
   const f = addForm.value
-  if (!f.symbol) { addError.value = '请填写股票代码'; return }
+  if (!f.symbol) { addError.value = 'Symbol is required'; return }
   addSubmitting.value = true
   addError.value = ''
   try {
     await addWatchlistItem({
       symbol: f.symbol.toUpperCase(),
       market: f.market,
-      theme: f.theme || '默认',
+      theme: f.theme || 'Default',
       reason: f.reason,
     })
     showAddModal.value = false
     await reload()
   } catch (e) {
-    addError.value = e.response?.data?.detail || '添加失败'
+    addError.value = e.response?.data?.detail || 'Failed to add'
   } finally {
     addSubmitting.value = false
   }
@@ -102,7 +102,7 @@ async function submitEdit() {
     showEditModal.value = false
     await reload()
   } catch (e) {
-    editError.value = e.response?.data?.detail || '修改失败'
+    editError.value = e.response?.data?.detail || 'Update failed'
   } finally {
     editSubmitting.value = false
   }
@@ -110,12 +110,12 @@ async function submitEdit() {
 
 // === Delete ===
 async function onDelete(item) {
-  if (!confirm(`确认取消关注 ${item.symbol}？`)) return
+  if (!confirm(`Unwatch ${item.symbol}?`)) return
   try {
     await deleteWatchlistItem(item.id)
     await reload()
   } catch (e) {
-    alert('删除失败: ' + (e.response?.data?.detail || e.message))
+    alert('Delete failed: ' + (e.response?.data?.detail || e.message))
   }
 }
 </script>
@@ -123,28 +123,28 @@ async function onDelete(item) {
 <template>
   <div>
     <div class="page-header">
-      <h1>关注标的</h1>
-      <p>持续观察的个股与ETF，周报中会给出分析和建议</p>
+      <h1>Watchlist</h1>
+      <p>Tracked stocks & ETFs with weekly report analysis</p>
     </div>
 
     <div class="filters">
       <select v-model="filterMarket">
-        <option value="">全部市场</option>
+        <option value="">All Markets</option>
         <option v-for="m in markets" :key="m" :value="m">{{ marketLabel(m) }}</option>
       </select>
       <select v-model="filterTheme">
-        <option value="">全部主题</option>
+        <option value="">All Themes</option>
         <option v-for="t in themes" :key="t" :value="t">{{ t }}</option>
       </select>
-      <button class="btn-primary" @click="openAddModal">+ 添加关注</button>
+      <button class="btn-primary" @click="openAddModal">+ Add to Watchlist</button>
     </div>
 
-    <div v-if="loading" class="loading">加载中</div>
+    <div v-if="loading" class="loading">Loading</div>
 
     <template v-else-if="filtered.length === 0">
       <div class="card empty-card">
-        <p>暂无关注标的</p>
-        <p class="empty-hint">添加你感兴趣的个股或ETF，系统将自动采集数据并在周报中给出分析建议</p>
+        <p>No watchlist items</p>
+        <p class="empty-hint">Add stocks or ETFs you're interested in. Data will be collected automatically and analyzed in weekly reports.</p>
       </div>
     </template>
 
@@ -154,11 +154,11 @@ async function onDelete(item) {
         <table class="data-table">
           <thead>
             <tr>
-              <th>代码</th>
-              <th>市场</th>
-              <th>关注理由</th>
-              <th>添加时间</th>
-              <th>操作</th>
+              <th>Symbol</th>
+              <th>Market</th>
+              <th>Reason</th>
+              <th>Added</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -168,8 +168,8 @@ async function onDelete(item) {
               <td class="reason-cell">{{ item.reason || '-' }}</td>
               <td class="date-cell">{{ formatDate(item.created_at) }}</td>
               <td class="actions">
-                <button class="btn-edit" @click="openEditModal(item)">编辑</button>
-                <button class="btn-del" @click="onDelete(item)">取消关注</button>
+                <button class="btn-edit" @click="openEditModal(item)">Edit</button>
+                <button class="btn-del" @click="onDelete(item)">Unwatch</button>
               </td>
             </tr>
           </tbody>
@@ -180,35 +180,35 @@ async function onDelete(item) {
     <!-- 添加关注弹窗 -->
     <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
       <div class="modal">
-        <h2>添加关注标的</h2>
+        <h2>Add to Watchlist</h2>
         <div class="form-row">
-          <label>股票代码</label>
-          <input v-model="addForm.symbol" placeholder="如 NVDA、00700、512480" />
+          <label>Symbol</label>
+          <input v-model="addForm.symbol" placeholder="e.g. NVDA, 00700, 512480" />
         </div>
         <div class="form-row">
-          <label>市场</label>
+          <label>Market</label>
           <select v-model="addForm.market">
-            <option value="US">美股</option>
-            <option value="HK">港股</option>
-            <option value="CN">A股</option>
+            <option value="US">US</option>
+            <option value="HK">HK</option>
+            <option value="CN">CN</option>
           </select>
         </div>
         <div class="form-row">
-          <label>主题分类</label>
-          <input v-model="addForm.theme" placeholder="如 AI芯片、消费科技、A股龙头" list="theme-suggestions" />
+          <label>Theme</label>
+          <input v-model="addForm.theme" placeholder="e.g. AI Chips, Consumer Tech" list="theme-suggestions" />
           <datalist id="theme-suggestions">
             <option v-for="t in themes" :key="t" :value="t" />
           </datalist>
         </div>
         <div class="form-row">
-          <label>关注理由</label>
-          <textarea v-model="addForm.reason" rows="3" placeholder="为什么关注？想在什么条件下入场？"></textarea>
+          <label>Reason</label>
+          <textarea v-model="addForm.reason" rows="3" placeholder="Why watch this? Entry conditions?"></textarea>
         </div>
         <div v-if="addError" class="form-error">{{ addError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showAddModal = false">取消</button>
+          <button class="btn-cancel" @click="showAddModal = false">Cancel</button>
           <button class="btn-primary" :disabled="addSubmitting" @click="submitAdd">
-            {{ addSubmitting ? '添加中...' : '确认添加' }}
+            {{ addSubmitting ? 'Adding...' : 'Confirm' }}
           </button>
         </div>
       </div>
@@ -217,23 +217,23 @@ async function onDelete(item) {
     <!-- 编辑弹窗 -->
     <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
       <div class="modal">
-        <h2>编辑 {{ editItem?.symbol }}</h2>
+        <h2>Edit {{ editItem?.symbol }}</h2>
         <div class="form-row">
-          <label>主题分类</label>
+          <label>Theme</label>
           <input v-model="editForm.theme" list="theme-suggestions-edit" />
           <datalist id="theme-suggestions-edit">
             <option v-for="t in themes" :key="t" :value="t" />
           </datalist>
         </div>
         <div class="form-row">
-          <label>关注理由</label>
+          <label>Reason</label>
           <textarea v-model="editForm.reason" rows="3"></textarea>
         </div>
         <div v-if="editError" class="form-error">{{ editError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showEditModal = false">取消</button>
+          <button class="btn-cancel" @click="showEditModal = false">Cancel</button>
           <button class="btn-primary" :disabled="editSubmitting" @click="submitEdit">
-            {{ editSubmitting ? '保存中...' : '保存' }}
+            {{ editSubmitting ? 'Saving...' : 'Save' }}
           </button>
         </div>
       </div>

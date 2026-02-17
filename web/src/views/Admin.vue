@@ -29,7 +29,7 @@ async function onGenerate() {
     generateNote.value = ''
     await loadCodes()
   } catch (e) {
-    alert(e.response?.data?.detail || '生成失败')
+    alert(e.response?.data?.detail || 'Generation failed')
   } finally {
     generating.value = false
   }
@@ -37,7 +37,7 @@ async function onGenerate() {
 
 function formatTime(t) {
   if (!t) return '-'
-  return new Date(t).toLocaleString('zh-CN')
+  return new Date(t).toLocaleString('en-US')
 }
 
 function copyCode(code) {
@@ -48,52 +48,52 @@ function copyCode(code) {
 <template>
   <div>
     <div class="page-header">
-      <h1>邀请码管理</h1>
-      <p>生成和管理邀请码</p>
+      <h1>Invitations</h1>
+      <p>Generate and manage invitation codes</p>
     </div>
 
     <!-- Generate Section -->
     <div class="card generate-section">
-      <div class="card-title">生成邀请码</div>
+      <div class="card-title">Generate Codes</div>
       <div class="generate-form">
         <div class="form-row-inline">
-          <label>数量</label>
+          <label>Count</label>
           <input v-model.number="generateCount" type="number" min="1" max="50" />
         </div>
         <div class="form-row-inline">
-          <label>备注</label>
-          <input v-model="generateNote" type="text" placeholder="可选备注" />
+          <label>Note</label>
+          <input v-model="generateNote" type="text" placeholder="Optional note" />
         </div>
         <button class="btn-generate" :disabled="generating" @click="onGenerate">
-          {{ generating ? '生成中...' : '生成' }}
+          {{ generating ? 'Generating...' : 'Generate' }}
         </button>
       </div>
 
       <!-- Newly generated codes -->
       <div v-if="newCodes.length" class="new-codes">
-        <div class="new-codes-title">新生成的邀请码：</div>
+        <div class="new-codes-title">New codes:</div>
         <div v-for="c in newCodes" :key="c.code || c" class="new-code-item" @click="copyCode(c.code || c)">
           <span class="code-text">{{ c.code || c }}</span>
-          <span class="copy-hint">点击复制</span>
+          <span class="copy-hint">Click to copy</span>
         </div>
       </div>
     </div>
 
     <!-- Code List -->
     <div class="card">
-      <div class="card-title">邀请码列表</div>
-      <div v-if="loading" class="loading">加载中</div>
-      <div v-else-if="!codes.length" class="empty">暂无邀请码</div>
+      <div class="card-title">All Codes</div>
+      <div v-if="loading" class="loading">Loading</div>
+      <div v-else-if="!codes.length" class="empty">No invitation codes</div>
       <div v-else style="overflow-x: auto">
         <table class="data-table">
           <thead>
             <tr>
-              <th>邀请码</th>
-              <th>状态</th>
-              <th>备注</th>
-              <th>使用者</th>
-              <th>使用时间</th>
-              <th>创建时间</th>
+              <th>Code</th>
+              <th>Status</th>
+              <th>Note</th>
+              <th>Used By</th>
+              <th>Used At</th>
+              <th>Created</th>
             </tr>
           </thead>
           <tbody>
@@ -101,7 +101,7 @@ function copyCode(code) {
               <td class="code-cell">{{ c.code }}</td>
               <td>
                 <span :class="['badge', c.used_by ? 'badge-used' : 'badge-unused']">
-                  {{ c.used_by ? '已使用' : '未使用' }}
+                  {{ c.used_by ? 'Used' : 'Available' }}
                 </span>
               </td>
               <td class="note-cell">{{ c.note || '-' }}</td>

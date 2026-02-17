@@ -93,23 +93,23 @@ onMounted(() => loadList('daily'))
 <template>
   <div>
     <div class="page-header">
-      <h1>报告分析</h1>
+      <h1>Reports</h1>
       <button class="generate-btn" @click="handleGenerate" :disabled="generating">
-        {{ generating ? '生成中...' : '手动生成' }}
+        {{ generating ? 'Generating...' : 'Generate' }}
       </button>
     </div>
 
     <!-- Tab Bar -->
     <div class="tab-bar">
-      <button :class="['tab-btn', { active: activeTab === 'daily' }]" @click="switchTab('daily')">日报</button>
-      <button :class="['tab-btn', { active: activeTab === 'weekly' }]" @click="switchTab('weekly')">周报</button>
+      <button :class="['tab-btn', { active: activeTab === 'daily' }]" @click="switchTab('daily')">Daily</button>
+      <button :class="['tab-btn', { active: activeTab === 'weekly' }]" @click="switchTab('weekly')">Weekly</button>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="loading">加载中</div>
+    <div v-if="loading" class="loading">Loading</div>
 
     <!-- Empty -->
-    <div v-else-if="!reports.length" class="empty">暂无报告，点击「手动生成」创建第一份报告</div>
+    <div v-else-if="!reports.length" class="empty">No reports yet. Click "Generate" to create one.</div>
 
     <!-- Report List -->
     <div v-else class="report-list">
@@ -118,7 +118,7 @@ onMounted(() => loadList('daily'))
         <div class="report-item-header" @click="toggleReport(r)">
           <div class="report-item-left">
             <span class="report-date">{{ formatDate(r.generated_at) }}</span>
-            <span class="report-type-badge">{{ activeTab === 'daily' ? '日报' : '周报' }}</span>
+            <span class="report-type-badge">{{ activeTab === 'daily' ? 'Daily' : 'Weekly' }}</span>
           </div>
           <div class="report-item-summary">{{ r.summary || '' }}</div>
           <span class="expand-icon">{{ expandedId === r.id ? '▼' : '▶' }}</span>
@@ -126,7 +126,7 @@ onMounted(() => loadList('daily'))
 
         <!-- Expanded Content -->
         <div v-if="expandedId === r.id" class="report-item-content">
-          <div v-if="loadingDetail" class="loading">加载报告内容...</div>
+          <div v-if="loadingDetail" class="loading">Loading report...</div>
           <template v-else-if="expandedContent">
             <DailyReportView v-if="activeTab === 'daily'" :content="expandedContent" />
             <WeeklyReportView v-else :content="expandedContent" />

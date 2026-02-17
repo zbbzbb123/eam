@@ -17,7 +17,7 @@ const filterMarket = ref('')
 const aiModalVisible = ref(false)
 const aiLoading = ref(false)
 const aiAnalysis = ref(null)
-const aiTitle = ref('AI 分析结果')
+const aiTitle = ref('AI Analysis')
 const batchLoading = ref(false)
 
 // Add holding modal
@@ -91,7 +91,7 @@ function pnlClass(v) {
 
 function fmt(v, digits = 2) {
   if (v == null) return '-'
-  return Number(v).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+  return Number(v).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
 
 function pctFmt(v) {
@@ -114,7 +114,7 @@ function openAddModal() {
 async function submitAdd() {
   const f = addForm.value
   if (!f.symbol || !f.quantity || !f.avg_cost || !f.first_buy_date) {
-    addError.value = '请填写所有必填项'
+    addError.value = 'Please fill in all required fields'
     return
   }
   addSubmitting.value = true
@@ -127,13 +127,13 @@ async function submitAdd() {
       quantity: f.quantity,
       avg_cost: f.avg_cost,
       first_buy_date: f.first_buy_date,
-      buy_reason: '手动录入'
+      buy_reason: 'Manual entry'
     })
     showAddModal.value = false
     await syncPrices()
     await reload()
   } catch (e) {
-    addError.value = e.response?.data?.detail || '录入失败'
+    addError.value = e.response?.data?.detail || 'Failed to add'
   } finally {
     addSubmitting.value = false
   }
@@ -175,7 +175,7 @@ async function submitEdit() {
         transaction_date: f.transaction_date ? new Date(f.transaction_date).toISOString() : undefined
       })
       previewData.value = preview
-      previewReason.value = preview.action === 'buy' ? '加仓' : '减仓'
+      previewReason.value = preview.action === 'buy' ? 'Add position' : 'Reduce position'
       previewDate.value = preview.suggested_date || new Date().toISOString().slice(0, 10)
       showPreviewModal.value = true
     } else {
@@ -192,7 +192,7 @@ async function submitEdit() {
       await reload()
     }
   } catch (e) {
-    editError.value = e.response?.data?.detail || '操作失败'
+    editError.value = e.response?.data?.detail || 'Operation failed'
   } finally {
     editSubmitting.value = false
   }
@@ -224,7 +224,7 @@ async function confirmPreview() {
     showEditModal.value = false
     await reload()
   } catch (e) {
-    editError.value = e.response?.data?.detail || '更新失败'
+    editError.value = e.response?.data?.detail || 'Update failed'
     showPreviewModal.value = false
   } finally {
     previewSubmitting.value = false
@@ -265,7 +265,7 @@ function openAddTxForm() {
 async function submitAddTx() {
   const f = addTxForm.value
   if (!f.quantity || !f.price || !f.transaction_date) {
-    addTxError.value = '请填写数量、价格和日期'
+    addTxError.value = 'Please fill in quantity, price and date'
     return
   }
   addTxSubmitting.value = true
@@ -276,14 +276,14 @@ async function submitAddTx() {
       quantity: Number(f.quantity),
       price: Number(f.price),
       transaction_date: new Date(f.transaction_date).toISOString(),
-      reason: f.reason || (f.action === 'buy' ? '加仓' : '减仓')
+      reason: f.reason || (f.action === 'buy' ? 'Add position' : 'Reduce position')
     })
     showAddTx.value = false
     // Refresh transactions and holdings
     txHistory.value = await getTransactions(addTxHoldingId.value)
     await reload()
   } catch (e) {
-    addTxError.value = e.response?.data?.detail || '添加失败'
+    addTxError.value = e.response?.data?.detail || 'Failed to add'
   } finally {
     addTxSubmitting.value = false
   }
@@ -291,18 +291,18 @@ async function submitAddTx() {
 
 // === Delete holding ===
 async function onDelete(h) {
-  if (!confirm(`确认删除 ${h.symbol} 的持仓记录？`)) return
+  if (!confirm(`Delete holding ${h.symbol}?`)) return
   try {
     await deleteHolding(h.id)
     await reload()
   } catch (e) {
-    alert('删除失败: ' + (e.response?.data?.detail || e.message))
+    alert('Delete failed: ' + (e.response?.data?.detail || e.message))
   }
 }
 
 // === AI ===
 async function onAnalyzeHolding(h) {
-  aiTitle.value = `AI 分析 - ${h.symbol}`
+  aiTitle.value = `AI Analysis - ${h.symbol}`
   aiAnalysis.value = null
   aiLoading.value = true
   aiModalVisible.value = true
@@ -321,51 +321,51 @@ async function onBatchAnalyze() {
 <template>
   <div>
     <div class="page-header">
-      <h1>持仓管理</h1>
-      <p>所有持仓明细与盈亏</p>
+      <h1>Holdings</h1>
+      <p>All Positions & P&L</p>
     </div>
 
     <div class="filters">
       <select v-model="filterTier">
-        <option value="">全部分层</option>
+        <option value="">All Tiers</option>
         <option value="core">Core</option>
         <option value="growth">Growth</option>
         <option value="gamble">Gamble</option>
       </select>
       <select v-model="filterMarket">
-        <option value="">全部市场</option>
+        <option value="">All Markets</option>
         <option v-for="m in markets" :key="m" :value="m">{{ m }}</option>
       </select>
-      <button class="btn-primary" @click="openAddModal">+ 新增持仓</button>
+      <button class="btn-primary" @click="openAddModal">+ Add Holding</button>
       <button class="btn-sync" :disabled="syncing" @click="onSyncPrices">
-        {{ syncing ? '同步中...' : '刷新股价' }}
+        {{ syncing ? 'Syncing...' : 'Sync Prices' }}
       </button>
       <button class="ai-btn" :disabled="batchLoading" @click="onBatchAnalyze">
-        {{ batchLoading ? 'AI 分析中...' : '批量分析' }}
+        {{ batchLoading ? 'Analyzing...' : 'Batch Analyze' }}
       </button>
     </div>
 
-    <div v-if="loading" class="loading">{{ syncing ? '正在同步最新股价...' : '加载中' }}</div>
+    <div v-if="loading" class="loading">{{ syncing ? 'Syncing latest prices...' : 'Loading' }}</div>
 
     <div v-else class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead>
           <tr>
-            <th>代码</th>
-            <th>名称</th>
-            <th>市场</th>
-            <th>分层</th>
-            <th>数量</th>
-            <th>均价</th>
-            <th>现价</th>
-            <th>盈亏</th>
-            <th>盈亏%</th>
-            <th>操作</th>
+            <th>Symbol</th>
+            <th>Name</th>
+            <th>Market</th>
+            <th>Tier</th>
+            <th>Qty</th>
+            <th>Avg Cost</th>
+            <th>Price</th>
+            <th>P&L</th>
+            <th>P&L%</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!filtered.length">
-            <td colspan="10" class="empty">暂无持仓数据，点击"新增持仓"开始录入</td>
+            <td colspan="10" class="empty">No holdings yet. Click "Add Holding" to get started.</td>
           </tr>
           <tr v-for="h in filtered" :key="h.id">
             <td style="font-weight:600;color:#fff">{{ h.symbol }}</td>
@@ -378,9 +378,9 @@ async function onBatchAnalyze() {
             <td :class="pnlClass(h.pnl)">{{ fmt(h.pnl) }}</td>
             <td :class="pnlClass(h.pnl_pct)">{{ pctFmt(h.pnl_pct) }}</td>
             <td class="actions">
-              <button class="btn-edit" @click="openEditModal(h)">编辑</button>
-              <button class="btn-tx" @click="openTxModal(h)">记录</button>
-              <button class="btn-del" @click="onDelete(h)">删除</button>
+              <button class="btn-edit" @click="openEditModal(h)">Edit</button>
+              <button class="btn-tx" @click="openTxModal(h)">Txns</button>
+              <button class="btn-del" @click="onDelete(h)">Del</button>
               <button class="ai-btn-sm" @click="onAnalyzeHolding(h)">AI</button>
             </td>
           </tr>
@@ -391,21 +391,21 @@ async function onBatchAnalyze() {
     <!-- 新增持仓弹窗 -->
     <div v-if="showAddModal" class="modal-overlay" @click.self="showAddModal = false">
       <div class="modal">
-        <h2>新增持仓</h2>
+        <h2>Add Holding</h2>
         <div class="form-row">
-          <label>股票代码</label>
-          <input v-model="addForm.symbol" placeholder="如 AAPL、00700、600519" />
+          <label>Symbol</label>
+          <input v-model="addForm.symbol" placeholder="e.g. AAPL, 00700, 600519" />
         </div>
         <div class="form-row">
-          <label>市场</label>
+          <label>Market</label>
           <select v-model="addForm.market">
-            <option value="US">美股</option>
-            <option value="HK">港股</option>
-            <option value="CN">A股</option>
+            <option value="US">US</option>
+            <option value="HK">HK</option>
+            <option value="CN">CN</option>
           </select>
         </div>
         <div class="form-row">
-          <label>分层</label>
+          <label>Tier</label>
           <select v-model="addForm.tier">
             <option value="core">Core</option>
             <option value="growth">Growth</option>
@@ -413,22 +413,22 @@ async function onBatchAnalyze() {
           </select>
         </div>
         <div class="form-row">
-          <label>持仓数量</label>
-          <input v-model="addForm.quantity" type="number" min="1" placeholder="股数" />
+          <label>Quantity</label>
+          <input v-model="addForm.quantity" type="number" min="1" placeholder="Shares" />
         </div>
         <div class="form-row">
-          <label>成本均价</label>
-          <input v-model="addForm.avg_cost" type="number" step="0.01" min="0.01" placeholder="每股成本" />
+          <label>Avg Cost</label>
+          <input v-model="addForm.avg_cost" type="number" step="0.01" min="0.01" placeholder="Cost per share" />
         </div>
         <div class="form-row">
-          <label>首次买入日期</label>
+          <label>First Buy Date</label>
           <input v-model="addForm.first_buy_date" type="date" />
         </div>
         <div v-if="addError" class="form-error">{{ addError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showAddModal = false">取消</button>
+          <button class="btn-cancel" @click="showAddModal = false">Cancel</button>
           <button class="btn-primary" :disabled="addSubmitting" @click="submitAdd">
-            {{ addSubmitting ? '录入中...' : '确认录入' }}
+            {{ addSubmitting ? 'Saving...' : 'Confirm' }}
           </button>
         </div>
       </div>
@@ -437,30 +437,30 @@ async function onBatchAnalyze() {
     <!-- 编辑持仓弹窗 -->
     <div v-if="showEditModal" class="modal-overlay" @click.self="showEditModal = false">
       <div class="modal modal-wide">
-        <h2>编辑 {{ editHolding?.symbol }}</h2>
+        <h2>Edit {{ editHolding?.symbol }}</h2>
         <div class="form-info">
-          当前持仓：{{ fmt(editHolding?.quantity, 0) }} 股 | 均价：{{ fmt(editHolding?.avg_cost) }}
+          Position: {{ fmt(editHolding?.quantity, 0) }} shares | Avg: {{ fmt(editHolding?.avg_cost) }}
         </div>
 
-        <div class="section-label">持仓信息</div>
+        <div class="section-label">Position</div>
         <div class="form-grid">
           <div class="form-row">
-            <label>持仓数量</label>
+            <label>Quantity</label>
             <input v-model="editForm.quantity" type="number" min="0" />
           </div>
           <div class="form-row">
-            <label>成本均价</label>
+            <label>Avg Cost</label>
             <input v-model="editForm.avg_cost" type="number" step="0.01" min="0.01" />
           </div>
         </div>
         <div class="form-row">
-          <label>交易日期（可选，留空自动推导）</label>
+          <label>Trade Date (optional, auto-inferred if empty)</label>
           <input v-model="editForm.transaction_date" type="date" />
         </div>
 
-        <div class="section-label">设置</div>
+        <div class="section-label">Settings</div>
         <div class="form-row">
-          <label>分层</label>
+          <label>Tier</label>
           <select v-model="editForm.tier">
             <option value="core">Core</option>
             <option value="growth">Growth</option>
@@ -469,28 +469,28 @@ async function onBatchAnalyze() {
         </div>
         <div class="form-grid">
           <div class="form-row">
-            <label>止损价</label>
-            <input v-model="editForm.stop_loss_price" type="number" step="0.01" placeholder="可选" />
+            <label>Stop Loss</label>
+            <input v-model="editForm.stop_loss_price" type="number" step="0.01" placeholder="Optional" />
           </div>
           <div class="form-row">
-            <label>止盈价</label>
-            <input v-model="editForm.take_profit_price" type="number" step="0.01" placeholder="可选" />
+            <label>Take Profit</label>
+            <input v-model="editForm.take_profit_price" type="number" step="0.01" placeholder="Optional" />
           </div>
         </div>
         <div class="form-row">
-          <label>备注</label>
-          <input v-model="editForm.notes" placeholder="可选" />
+          <label>Notes</label>
+          <input v-model="editForm.notes" placeholder="Optional" />
         </div>
 
         <!-- Transaction History -->
         <div class="tx-toggle" @click="loadTxHistory">
-          {{ txHistoryLoading ? '加载中...' : (showTxHistory ? '收起交易明细 ▲' : '查看交易明细 ▼') }}
+          {{ txHistoryLoading ? 'Loading...' : (showTxHistory ? 'Hide Transactions ▲' : 'Show Transactions ▼') }}
         </div>
         <div v-if="showTxHistory" class="tx-history">
-          <div v-if="!txHistory.length" class="tx-empty">暂无交易记录</div>
+          <div v-if="!txHistory.length" class="tx-empty">No transactions</div>
           <div v-for="tx in txHistory" :key="tx.id" class="tx-item">
-            <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? '买入' : '卖出' }}</span>
-            <span>{{ fmt(tx.quantity, 0) }} 股</span>
+            <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? 'BUY' : 'SELL' }}</span>
+            <span>{{ fmt(tx.quantity, 0) }} shares</span>
             <span>@ {{ fmt(tx.price) }}</span>
             <span class="tx-date">{{ tx.transaction_date?.slice(0, 10) }}</span>
             <span class="tx-reason">{{ tx.reason }}</span>
@@ -499,9 +499,9 @@ async function onBatchAnalyze() {
 
         <div v-if="editError" class="form-error">{{ editError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showEditModal = false">取消</button>
+          <button class="btn-cancel" @click="showEditModal = false">Cancel</button>
           <button class="btn-primary" :disabled="editSubmitting" @click="submitEdit">
-            {{ editSubmitting ? '处理中...' : '保存' }}
+            {{ editSubmitting ? 'Saving...' : 'Save' }}
           </button>
         </div>
       </div>
@@ -510,36 +510,36 @@ async function onBatchAnalyze() {
     <!-- 交易推导确认弹窗 -->
     <div v-if="showPreviewModal" class="modal-overlay" @click.self="showPreviewModal = false">
       <div class="modal">
-        <h2>推导交易确认</h2>
+        <h2>Confirm Inferred Transaction</h2>
         <div class="preview-info">
           <div class="preview-row">
-            <span class="preview-label">类型</span>
+            <span class="preview-label">Type</span>
             <span :class="previewData?.action === 'buy' ? 'tx-buy' : 'tx-sell'">
-              {{ previewData?.action === 'buy' ? '买入' : '卖出' }}
+              {{ previewData?.action === 'buy' ? 'BUY' : 'SELL' }}
             </span>
           </div>
           <div class="preview-row">
-            <span class="preview-label">数量</span>
-            <span>{{ fmt(previewData?.quantity, 0) }} 股</span>
+            <span class="preview-label">Quantity</span>
+            <span>{{ fmt(previewData?.quantity, 0) }} shares</span>
           </div>
           <div class="preview-row">
-            <span class="preview-label">推导价格</span>
-            <span>{{ fmt(previewData?.inferred_price) }} 元</span>
+            <span class="preview-label">Inferred Price</span>
+            <span>{{ fmt(previewData?.inferred_price) }}</span>
           </div>
         </div>
         <div class="form-row">
-          <label>交易日期</label>
+          <label>Trade Date</label>
           <input v-model="previewDate" type="date" />
         </div>
         <div class="form-row">
-          <label>原因</label>
-          <input v-model="previewReason" :placeholder="previewData?.action === 'buy' ? '加仓' : '减仓'" />
+          <label>Reason</label>
+          <input v-model="previewReason" :placeholder="previewData?.action === 'buy' ? 'Add position' : 'Reduce position'" />
         </div>
         <div v-if="editError" class="form-error">{{ editError }}</div>
         <div class="form-actions">
-          <button class="btn-cancel" @click="showPreviewModal = false">取消</button>
+          <button class="btn-cancel" @click="showPreviewModal = false">Cancel</button>
           <button class="btn-primary" :disabled="previewSubmitting" @click="confirmPreview">
-            {{ previewSubmitting ? '提交中...' : '确认' }}
+            {{ previewSubmitting ? 'Submitting...' : 'Confirm' }}
           </button>
         </div>
       </div>
@@ -548,20 +548,20 @@ async function onBatchAnalyze() {
     <!-- 交易记录弹窗 -->
     <div v-if="showTxModal" class="modal-overlay" @click.self="showTxModal = false">
       <div class="modal modal-wide">
-        <h2>{{ txModalSymbol }} 交易记录</h2>
-        <div v-if="txHistoryLoading" class="tx-empty">加载中...</div>
-        <div v-else-if="!txHistory.length" class="tx-empty">暂无交易记录</div>
+        <h2>{{ txModalSymbol }} Transactions</h2>
+        <div v-if="txHistoryLoading" class="tx-empty">Loading...</div>
+        <div v-else-if="!txHistory.length" class="tx-empty">No transactions</div>
         <div v-else class="tx-timeline">
           <div v-for="tx in txHistory" :key="tx.id" class="tx-timeline-item">
             <div class="tx-timeline-dot" :class="tx.action === 'buy' ? 'dot-buy' : 'dot-sell'"></div>
             <div class="tx-timeline-content">
               <div class="tx-timeline-header">
-                <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? '买入' : '卖出' }}</span>
+                <span :class="tx.action === 'buy' ? 'tx-buy' : 'tx-sell'">{{ tx.action === 'buy' ? 'BUY' : 'SELL' }}</span>
                 <span class="tx-timeline-date">{{ tx.transaction_date?.slice(0, 10) }}</span>
               </div>
               <div class="tx-timeline-detail">
-                {{ fmt(tx.quantity, 0) }} 股 @ {{ fmt(tx.price) }}
-                <span class="tx-timeline-total">合计 {{ fmt(Number(tx.quantity) * Number(tx.price)) }}</span>
+                {{ fmt(tx.quantity, 0) }} shares @ {{ fmt(tx.price) }}
+                <span class="tx-timeline-total">Total {{ fmt(Number(tx.quantity) * Number(tx.price)) }}</span>
               </div>
               <div v-if="tx.reason" class="tx-timeline-reason">{{ tx.reason }}</div>
             </div>
@@ -569,47 +569,47 @@ async function onBatchAnalyze() {
         </div>
 
         <!-- Add transaction inline form -->
-        <div v-if="!showAddTx" class="add-tx-toggle" @click="openAddTxForm">+ 新增交易</div>
+        <div v-if="!showAddTx" class="add-tx-toggle" @click="openAddTxForm">+ Add Transaction</div>
         <div v-else class="add-tx-form">
-          <div class="section-label">新增交易</div>
+          <div class="section-label">New Transaction</div>
           <div class="form-grid">
             <div class="form-row">
-              <label>类型</label>
+              <label>Type</label>
               <select v-model="addTxForm.action">
-                <option value="buy">买入</option>
-                <option value="sell">卖出</option>
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
               </select>
             </div>
             <div class="form-row">
-              <label>日期</label>
+              <label>Date</label>
               <input v-model="addTxForm.transaction_date" type="date" />
             </div>
           </div>
           <div class="form-grid">
             <div class="form-row">
-              <label>数量</label>
-              <input v-model="addTxForm.quantity" type="number" min="1" placeholder="股数" />
+              <label>Quantity</label>
+              <input v-model="addTxForm.quantity" type="number" min="1" placeholder="Shares" />
             </div>
             <div class="form-row">
-              <label>价格</label>
-              <input v-model="addTxForm.price" type="number" step="0.01" min="0.01" placeholder="每股价格" />
+              <label>Price</label>
+              <input v-model="addTxForm.price" type="number" step="0.01" min="0.01" placeholder="Price per share" />
             </div>
           </div>
           <div class="form-row">
-            <label>原因</label>
-            <input v-model="addTxForm.reason" :placeholder="addTxForm.action === 'buy' ? '加仓' : '减仓'" />
+            <label>Reason</label>
+            <input v-model="addTxForm.reason" :placeholder="addTxForm.action === 'buy' ? 'Add position' : 'Reduce position'" />
           </div>
           <div v-if="addTxError" class="form-error">{{ addTxError }}</div>
           <div class="form-actions" style="margin-top:10px">
-            <button class="btn-cancel" @click="showAddTx = false">取消</button>
+            <button class="btn-cancel" @click="showAddTx = false">Cancel</button>
             <button class="btn-primary" :disabled="addTxSubmitting" @click="submitAddTx">
-              {{ addTxSubmitting ? '提交中...' : '确认添加' }}
+              {{ addTxSubmitting ? 'Submitting...' : 'Add' }}
             </button>
           </div>
         </div>
 
         <div class="form-actions">
-          <button class="btn-cancel" @click="showTxModal = false">关闭</button>
+          <button class="btn-cancel" @click="showTxModal = false">Close</button>
         </div>
       </div>
     </div>

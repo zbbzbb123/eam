@@ -31,7 +31,7 @@ onMounted(async () => {
 
 function fmt(v) {
   const n = Number(v) || 0
-  return n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function pnlClass(v) {
@@ -53,7 +53,7 @@ function tierLabel(t) {
 
 function formatDate(d) {
   if (!d) return ''
-  return new Date(d).toLocaleDateString('zh-CN')
+  return new Date(d).toLocaleDateString('en-US')
 }
 
 function truncate(text, len = 120) {
@@ -65,11 +65,11 @@ function truncate(text, len = 120) {
 <template>
   <div>
     <div class="page-header">
-      <h1>仪表盘</h1>
-      <p>投资组合概览</p>
+      <h1>Dashboard</h1>
+      <p>Portfolio Overview</p>
     </div>
 
-    <div v-if="loading" class="loading">加载中</div>
+    <div v-if="loading" class="loading">Loading</div>
 
     <template v-else>
       <!-- Section 1: 持仓概览 -->
@@ -77,19 +77,19 @@ function truncate(text, len = 120) {
         <!-- 总持仓卡片 -->
         <div class="card tier-card total-card">
           <div class="tier-header">
-            <span class="tier-title">总持仓</span>
+            <span class="tier-title">Total Portfolio</span>
           </div>
           <div class="tier-value">¥{{ fmt(dashboard.total_value) }}</div>
           <div class="pnl-row">
             <div class="pnl-item">
-              <span class="pnl-label">7天</span>
+              <span class="pnl-label">7D</span>
               <span :class="pnlClass(dashboard.pnl_7d)">
                 {{ pnlSign(dashboard.pnl_7d) }}{{ fmt(dashboard.pnl_7d) }}
                 <small>({{ pnlSign(dashboard.pnl_7d_pct) }}{{ fmt(dashboard.pnl_7d_pct) }}%)</small>
               </span>
             </div>
             <div class="pnl-item">
-              <span class="pnl-label">30天</span>
+              <span class="pnl-label">30D</span>
               <span :class="pnlClass(dashboard.pnl_30d)">
                 {{ pnlSign(dashboard.pnl_30d) }}{{ fmt(dashboard.pnl_30d) }}
                 <small>({{ pnlSign(dashboard.pnl_30d_pct) }}{{ fmt(dashboard.pnl_30d_pct) }}%)</small>
@@ -106,18 +106,18 @@ function truncate(text, len = 120) {
           </div>
           <div class="tier-value">
             ¥{{ fmt(tier.market_value) }}
-            <small class="weight-label">占 {{ fmt(tier.weight_pct) }}%</small>
+            <small class="weight-label">{{ fmt(tier.weight_pct) }}% of total</small>
           </div>
           <div class="pnl-row">
             <div class="pnl-item">
-              <span class="pnl-label">7天</span>
+              <span class="pnl-label">7D</span>
               <span :class="pnlClass(tier.pnl_7d)">
                 {{ pnlSign(tier.pnl_7d) }}{{ fmt(tier.pnl_7d) }}
                 <small>({{ pnlSign(tier.pnl_7d_pct) }}{{ fmt(tier.pnl_7d_pct) }}%)</small>
               </span>
             </div>
             <div class="pnl-item">
-              <span class="pnl-label">30天</span>
+              <span class="pnl-label">30D</span>
               <span :class="pnlClass(tier.pnl_30d)">
                 {{ pnlSign(tier.pnl_30d) }}{{ fmt(tier.pnl_30d) }}
                 <small>({{ pnlSign(tier.pnl_30d_pct) }}{{ fmt(tier.pnl_30d_pct) }}%)</small>
@@ -129,11 +129,11 @@ function truncate(text, len = 120) {
           <table v-if="tier.holdings.length" class="holdings-table">
             <thead>
               <tr>
-                <th>股票</th>
-                <th>市值</th>
-                <th>占比</th>
-                <th>7天盈亏</th>
-                <th>30天盈亏</th>
+                <th>Stock</th>
+                <th>Value</th>
+                <th>Weight</th>
+                <th>7D P&L</th>
+                <th>30D P&L</th>
               </tr>
             </thead>
             <tbody>
@@ -155,36 +155,36 @@ function truncate(text, len = 120) {
               </tr>
             </tbody>
           </table>
-          <div v-else class="empty">暂无持仓</div>
+          <div v-else class="empty">No holdings</div>
         </div>
       </div>
 
       <!-- Section 2: 最近信号 -->
       <div class="card" style="margin-top:20px">
-        <div class="card-title">最近3天信号</div>
-        <div v-if="!signals.length" class="empty">暂无信号</div>
+        <div class="card-title">Recent Signals (3 days)</div>
+        <div v-if="!signals.length" class="empty">No signals</div>
         <SignalCard v-for="s in signals" :key="s.id" :signal="s" />
       </div>
 
       <!-- Section 3: 最新报告 -->
       <div class="grid-2" style="margin-top:20px">
         <div class="card">
-          <div class="card-title">最新日报</div>
+          <div class="card-title">Latest Daily Report</div>
           <template v-if="latestDaily">
             <div class="report-date">{{ formatDate(latestDaily.report_date || latestDaily.generated_at) }}</div>
             <div class="report-summary">{{ truncate(latestDaily.summary) }}</div>
-            <router-link to="/reports" class="report-link">查看详情 &rarr;</router-link>
+            <router-link to="/reports" class="report-link">View details &rarr;</router-link>
           </template>
-          <div v-else class="empty">暂无日报</div>
+          <div v-else class="empty">No daily reports</div>
         </div>
         <div class="card">
-          <div class="card-title">最新周报</div>
+          <div class="card-title">Latest Weekly Report</div>
           <template v-if="latestWeekly">
             <div class="report-date">{{ formatDate(latestWeekly.report_date || latestWeekly.generated_at) }}</div>
             <div class="report-summary">{{ truncate(latestWeekly.summary) }}</div>
-            <router-link to="/reports" class="report-link">查看详情 &rarr;</router-link>
+            <router-link to="/reports" class="report-link">View details &rarr;</router-link>
           </template>
-          <div v-else class="empty">暂无周报</div>
+          <div v-else class="empty">No weekly reports</div>
         </div>
       </div>
     </template>

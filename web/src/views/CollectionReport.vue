@@ -77,7 +77,7 @@ const heatmapOption = computed(() => {
       formatter(p) {
         const d = dayList[p.data[0]]
         const name = sourceNames[p.data[1]]
-        return `${d.date} ${name}<br/>入库 <b>${p.data[2]}</b> 条`
+        return `${d.date} ${name}<br/><b>${p.data[2]}</b> records`
       },
     },
     grid: { left: 100, right: 40, top: 10, bottom: 40 },
@@ -139,7 +139,7 @@ const barOption = computed(() => {
     tooltip: {
       formatter(p) {
         const d = dayList[p.dataIndex]
-        return `${d.date}<br/>总入库 <b>${d.total}</b> 条<br/>采集源 ${d.sources_collected}/${d.sources_total}`
+        return `${d.date}<br/>Total <b>${d.total}</b> records<br/>Sources ${d.sources_collected}/${d.sources_total}`
       },
     },
     grid: { left: 50, right: 20, top: 10, bottom: 30 },
@@ -178,8 +178,8 @@ function onBarClick(params) {
 <template>
   <div>
     <div class="page-header">
-      <h1>采集日报</h1>
-      <p>每日数据采集情况看板</p>
+      <h1>Collection</h1>
+      <p>Daily data collection dashboard</p>
     </div>
 
     <!-- Range selector -->
@@ -190,16 +190,16 @@ function onBarClick(params) {
         :class="['range-btn', { active: days === d }]"
         @click="days = d"
       >
-        {{ d }}天
+        {{ d }}d
       </button>
     </div>
 
-    <div v-if="loading" class="loading">加载中</div>
+    <div v-if="loading" class="loading">Loading</div>
 
     <template v-else>
       <!-- Daily total bar -->
       <div class="card" style="margin-bottom: 20px">
-        <div class="card-title">每日入库总量（点击柱状图查看详情）</div>
+        <div class="card-title">Daily Ingestion (click bar for details)</div>
         <v-chart
           :option="barOption"
           autoresize
@@ -210,28 +210,28 @@ function onBarClick(params) {
 
       <!-- Heatmap -->
       <div class="card" style="margin-bottom: 20px">
-        <div class="card-title">采集源 × 日期 热力图</div>
+        <div class="card-title">Source x Date Heatmap</div>
         <v-chart :option="heatmapOption" autoresize style="height: 340px" />
       </div>
 
       <!-- Detail panel -->
       <div v-if="selectedDate" class="card">
         <div class="card-title">
-          {{ selectedDate }} 采集详情
+          {{ selectedDate }} Details
           <span v-if="detail" class="detail-summary">
-            共 {{ detail.total_records }} 条，{{ detail.sources_collected }} 个源
+            {{ detail.total_records }} records, {{ detail.sources_collected }} sources
           </span>
         </div>
 
-        <div v-if="detailLoading" class="loading" style="padding: 20px">加载中</div>
+        <div v-if="detailLoading" class="loading" style="padding: 20px">Loading</div>
 
         <table v-else-if="detail" class="data-table">
           <thead>
             <tr>
-              <th>采集源</th>
-              <th>入库行数</th>
-              <th>状态</th>
-              <th>摘要</th>
+              <th>Source</th>
+              <th>Records</th>
+              <th>Status</th>
+              <th>Summary</th>
             </tr>
           </thead>
           <tbody>
@@ -240,7 +240,7 @@ function onBarClick(params) {
               <td>{{ s.count }}</td>
               <td>
                 <span :class="['status-dot', s.count > 0 ? 'ok' : 'empty']"></span>
-                {{ s.count > 0 ? '已采集' : '无数据' }}
+                {{ s.count > 0 ? 'OK' : 'Empty' }}
               </td>
               <td class="detail-cell">{{ s.detail || '-' }}</td>
             </tr>
