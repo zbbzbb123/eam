@@ -1,10 +1,9 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getDailyReportList, getDailyReportDetail, getWeeklyReportList, getWeeklyReportDetail, triggerDailyReport, triggerWeeklyReport } from '../api'
-import DailyReportView from '../components/report/DailyReportView.vue'
+import { getWeeklyReportList, getWeeklyReportDetail, triggerWeeklyReport } from '../api'
 import WeeklyReportView from '../components/report/WeeklyReportView.vue'
 
-const activeTab = ref('daily')
+const activeTab = ref('weekly')
 const reports = ref([])
 const loading = ref(false)
 const expandedId = ref(null)
@@ -18,11 +17,7 @@ async function loadList(type) {
   expandedId.value = null
   expandedContent.value = null
   try {
-    if (type === 'daily') {
-      reports.value = await getDailyReportList()
-    } else {
-      reports.value = await getWeeklyReportList()
-    }
+    reports.value = await getWeeklyReportList()
     // Auto-expand the latest report
     if (reports.value.length > 0) {
       await toggleReport(reports.value[0])
@@ -42,12 +37,7 @@ async function toggleReport(report) {
   expandedContent.value = null
   loadingDetail.value = true
   try {
-    let detail
-    if (activeTab.value === 'daily') {
-      detail = await getDailyReportDetail(report.id)
-    } else {
-      detail = await getWeeklyReportDetail(report.id)
-    }
+    const detail = await getWeeklyReportDetail(report.id)
     if (detail) {
       expandedContent.value = detail.content
     }
@@ -65,11 +55,7 @@ function switchTab(tab) {
 async function handleGenerate() {
   generating.value = true
   try {
-    if (activeTab.value === 'daily') {
-      await triggerDailyReport()
-    } else {
-      await triggerWeeklyReport()
-    }
+    await triggerWeeklyReport()
     // Reload list after generation
     await loadList(activeTab.value)
   } finally {
@@ -87,7 +73,7 @@ function formatDate(dateStr) {
   return `${month}-${day} ${hour}:${min}`
 }
 
-onMounted(() => loadList('daily'))
+onMounted(() => loadList('weekly'))
 </script>
 
 <template>
@@ -101,7 +87,6 @@ onMounted(() => loadList('daily'))
 
     <!-- Tab Bar -->
     <div class="tab-bar">
-      <button :class="['tab-btn', { active: activeTab === 'daily' }]" @click="switchTab('daily')">Daily</button>
       <button :class="['tab-btn', { active: activeTab === 'weekly' }]" @click="switchTab('weekly')">Weekly</button>
     </div>
 
@@ -118,7 +103,7 @@ onMounted(() => loadList('daily'))
         <div class="report-item-header" @click="toggleReport(r)">
           <div class="report-item-left">
             <span class="report-date">{{ formatDate(r.generated_at) }}</span>
-            <span class="report-type-badge">{{ activeTab === 'daily' ? 'Daily' : 'Weekly' }}</span>
+            <span class="report-type-badge">Weekly</span>
           </div>
           <div class="report-item-summary">{{ r.summary || '' }}</div>
           <span class="expand-icon">{{ expandedId === r.id ? '▼' : '▶' }}</span>
@@ -128,8 +113,7 @@ onMounted(() => loadList('daily'))
         <div v-if="expandedId === r.id" class="report-item-content">
           <div v-if="loadingDetail" class="loading">Loading report...</div>
           <template v-else-if="expandedContent">
-            <DailyReportView v-if="activeTab === 'daily'" :content="expandedContent" />
-            <WeeklyReportView v-else :content="expandedContent" />
+            <WeeklyReportView :content="expandedContent" />
           </template>
         </div>
       </div>

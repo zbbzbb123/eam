@@ -12,7 +12,9 @@ const holdings = ref([])
 const loading = ref(true)
 const syncing = ref(false)
 const filterTier = ref('')
+const filterStrategy = ref('')
 const filterMarket = ref('')
+const deletingIds = ref(new Set())
 
 // AI state
 const aiModalVisible = ref(false)
@@ -23,13 +25,23 @@ const batchLoading = ref(false)
 
 // Add holding modal
 const showAddModal = ref(false)
-const addForm = ref({ symbol: '', market: 'US', tier: 'core', quantity: '', avg_cost: '', first_buy_date: '' })
+const addForm = ref({
+  symbol: '', market: 'US', asset_type: 'stock',
+  strategy_bucket: 'ai_infrastructure', strategy_sub_bucket: 'ETF类',
+  target_weight_pct: '', research_priority: 1,
+  quantity: '', avg_cost: '', first_buy_date: ''
+})
 const addError = ref('')
 const addSubmitting = ref(false)
 
 // Edit holding modal
 const showEditModal = ref(false)
-const editForm = ref({ id: null, quantity: '', avg_cost: '', tier: '', stop_loss_price: '', take_profit_price: '', notes: '', transaction_date: '' })
+const editForm = ref({
+  id: null, quantity: '', avg_cost: '', asset_type: 'stock',
+  strategy_bucket: '', strategy_sub_bucket: '', target_weight_pct: '',
+  research_priority: 0, stop_loss_price: '', take_profit_price: '',
+  notes: '', transaction_date: ''
+})
 const editHolding = ref(null)
 const editError = ref('')
 const editSubmitting = ref(false)
@@ -86,6 +98,7 @@ async function onSyncPrices() {
 const filtered = computed(() => {
   let list = holdings.value
   if (filterTier.value) list = list.filter(h => h.tier === filterTier.value)
+  if (filterStrategy.value) list = list.filter(h => h.strategy_bucket === filterStrategy.value)
   if (filterMarket.value) list = list.filter(h => h.market === filterMarket.value)
   return list
 })
@@ -109,13 +122,46 @@ function pctFmt(v) {
 }
 
 function tierLabel(t) {
-  const map = { core: 'Core', growth: 'Growth', gamble: 'Gamble', CORE: 'Core', GROWTH: 'Growth', GAMBLE: 'Gamble' }
+  const map = {
+    core: 'Core 风险',
+    growth: 'Growth 风险',
+    gamble: 'Gamble 风险',
+    CORE: 'Core 风险',
+    GROWTH: 'Growth 风险',
+    GAMBLE: 'Gamble 风险',
+  }
   return map[t] || t
+}
+
+function strategyLabel(s) {
+  const map = {
+    ai_infrastructure: 'AI基础设施',
+    ai_application: 'AI应用个股',
+    misc: '杂票',
+    cash: '现金',
+  }
+  return map[s] || s || '-'
+}
+
+function isDeleting(id) {
+  return deletingIds.value.has(id)
+}
+
+function setDeleting(id, deleting) {
+  const next = new Set(deletingIds.value)
+  if (deleting) next.add(id)
+  else next.delete(id)
+  deletingIds.value = next
 }
 
 // === Add holding ===
 function openAddModal() {
-  addForm.value = { symbol: '', market: 'US', tier: 'core', quantity: '', avg_cost: '', first_buy_date: new Date().toISOString().slice(0, 10) }
+  addForm.value = {
+    symbol: '', market: 'US', asset_type: 'stock',
+    strategy_bucket: 'ai_infrastructure', strategy_sub_bucket: 'ETF类',
+    target_weight_pct: '', research_priority: 1,
+    quantity: '', avg_cost: '', first_buy_date: new Date().toISOString().slice(0, 10)
+  }
   addError.value = ''
   showAddModal.value = true
 }
@@ -132,7 +178,11 @@ async function submitAdd() {
     await createHolding({
       symbol: f.symbol.toUpperCase(),
       market: f.market,
-      tier: f.tier,
+      asset_type: f.asset_type,
+      strategy_bucket: f.strategy_bucket,
+      strategy_sub_bucket: f.strategy_sub_bucket || null,
+      target_weight_pct: f.target_weight_pct === '' ? null : String(f.target_weight_pct),
+      research_priority: Number(f.research_priority || 0),
       quantity: f.quantity,
       avg_cost: f.avg_cost,
       first_buy_date: f.first_buy_date,
@@ -155,7 +205,11 @@ function openEditModal(h) {
     id: h.id,
     quantity: h.quantity,
     avg_cost: h.avg_cost,
-    tier: (h.tier || '').toLowerCase(),
+    asset_type: h.asset_type || 'stock',
+    strategy_bucket: h.strategy_bucket || 'misc',
+    strategy_sub_bucket: h.strategy_sub_bucket || '',
+    target_weight_pct: h.target_weight_pct ?? '',
+    research_priority: h.research_priority ?? 0,
     stop_loss_price: h.stop_loss || '',
     take_profit_price: h.take_profit || '',
     notes: h.notes || '',
@@ -199,7 +253,11 @@ async function submitEdit() {
     } else {
       // Only settings changed → direct PATCH
       const data = {}
-      if (f.tier) data.tier = f.tier
+      if (f.asset_type) data.asset_type = f.asset_type
+      if (f.strategy_bucket) data.strategy_bucket = f.strategy_bucket
+      data.strategy_sub_bucket = f.strategy_sub_bucket || null
+      data.target_weight_pct = f.target_weight_pct === '' ? null : String(f.target_weight_pct)
+      data.research_priority = Number(f.research_priority || 0)
       if (f.stop_loss_price) data.stop_loss_price = String(f.stop_loss_price)
       else data.stop_loss_price = null
       if (f.take_profit_price) data.take_profit_price = String(f.take_profit_price)
@@ -231,7 +289,11 @@ async function confirmPreview() {
 
     // Also update settings if changed
     const data = {}
-    if (f.tier) data.tier = f.tier
+    if (f.asset_type) data.asset_type = f.asset_type
+    if (f.strategy_bucket) data.strategy_bucket = f.strategy_bucket
+    data.strategy_sub_bucket = f.strategy_sub_bucket || null
+    data.target_weight_pct = f.target_weight_pct === '' ? null : String(f.target_weight_pct)
+    data.research_priority = Number(f.research_priority || 0)
     if (f.stop_loss_price) data.stop_loss_price = String(f.stop_loss_price)
     if (f.take_profit_price) data.take_profit_price = String(f.take_profit_price)
     if (f.notes) data.notes = f.notes
@@ -347,12 +409,19 @@ async function onConfirmBackfill() {
 
 // === Delete holding ===
 async function onDelete(h) {
+  if (isDeleting(h.id)) return
   if (!confirm(`Delete holding ${h.symbol}?`)) return
+  const previous = holdings.value
+  holdings.value = holdings.value.filter(item => item.id !== h.id)
+  setDeleting(h.id, true)
   try {
     await deleteHolding(h.id)
     await reload()
   } catch (e) {
+    holdings.value = previous
     alert('Delete failed: ' + (e.response?.data?.detail || e.message))
+  } finally {
+    setDeleting(h.id, false)
   }
 }
 
@@ -382,11 +451,18 @@ async function onBatchAnalyze() {
     </div>
 
     <div class="filters">
+      <select v-model="filterStrategy">
+        <option value="">All Strategies</option>
+        <option value="ai_infrastructure">AI基础设施</option>
+        <option value="ai_application">AI应用个股</option>
+        <option value="misc">杂票</option>
+        <option value="cash">现金</option>
+      </select>
       <select v-model="filterTier">
-        <option value="">All Tiers</option>
-        <option value="core">Core</option>
-        <option value="growth">Growth</option>
-        <option value="gamble">Gamble</option>
+        <option value="">All CGG Risk</option>
+        <option value="core">Core 风险</option>
+        <option value="growth">Growth 风险</option>
+        <option value="gamble">Gamble 风险</option>
       </select>
       <select v-model="filterMarket">
         <option value="">All Markets</option>
@@ -410,7 +486,10 @@ async function onBatchAnalyze() {
             <th>Symbol</th>
             <th>Name</th>
             <th>Market</th>
-            <th>Tier</th>
+            <th>Strategy</th>
+            <th>Risk</th>
+            <th>Target</th>
+            <th>Weight</th>
             <th>Qty</th>
             <th>Avg Cost</th>
             <th>Price</th>
@@ -421,23 +500,33 @@ async function onBatchAnalyze() {
         </thead>
         <tbody>
           <tr v-if="!filtered.length">
-            <td colspan="10" class="empty">No holdings yet. Click "Add Holding" to get started.</td>
+            <td colspan="13" class="empty">No holdings yet. Click "Add Holding" to get started.</td>
           </tr>
           <tr v-for="h in filtered" :key="h.id">
             <td style="font-weight:600;color:#fff">{{ h.symbol }}</td>
             <td class="name-cell">{{ h.name || '-' }}</td>
             <td>{{ h.market || '-' }}</td>
-            <td><span class="badge" :class="'badge-' + (h.tier||'').toLowerCase()">{{ tierLabel(h.tier) }}</span></td>
+            <td>
+              <span class="badge" :class="'badge-' + (h.strategy_bucket||'misc')">{{ strategyLabel(h.strategy_bucket) }}</span>
+              <span v-if="h.strategy_sub_bucket" class="sub-bucket">{{ h.strategy_sub_bucket }}</span>
+            </td>
+            <td>
+              <span class="badge risk-badge" :class="'badge-' + (h.tier||'core')">{{ tierLabel(h.tier) }}</span>
+            </td>
+            <td>{{ h.target_weight_pct == null ? '-' : pctFmt(h.target_weight_pct) }}</td>
+            <td>{{ pctFmt(h.portfolio_weight_pct) }}</td>
             <td>{{ fmt(h.quantity, 0) }}</td>
             <td>{{ fmt(h.avg_cost) }}</td>
             <td>{{ fmt(h.current_price) }}</td>
             <td :class="pnlClass(h.pnl)">{{ fmt(h.pnl) }}</td>
             <td :class="pnlClass(h.pnl_pct)">{{ pctFmt(h.pnl_pct) }}</td>
             <td class="actions">
-              <button class="btn-edit" @click="openEditModal(h)">Edit</button>
-              <button class="btn-tx" @click="openTxModal(h)">Txns</button>
-              <button class="btn-del" @click="onDelete(h)">Del</button>
-              <button class="ai-btn-sm" @click="onAnalyzeHolding(h)">AI</button>
+              <button type="button" class="btn-edit" @click="openEditModal(h)">Edit</button>
+              <button type="button" class="btn-tx" @click="openTxModal(h)">Txns</button>
+              <button type="button" class="btn-del" :disabled="isDeleting(h.id)" @click="onDelete(h)">
+                {{ isDeleting(h.id) ? 'Deleting' : 'Del' }}
+              </button>
+              <button type="button" class="ai-btn-sm" @click="onAnalyzeHolding(h)">AI</button>
             </td>
           </tr>
         </tbody>
@@ -460,13 +549,38 @@ async function onBatchAnalyze() {
             <option value="CN">CN</option>
           </select>
         </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Asset Type</label>
+            <select v-model="addForm.asset_type">
+              <option value="stock">Stock</option>
+              <option value="etf">ETF</option>
+              <option value="cash">Cash</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>AI Strategy</label>
+            <select v-model="addForm.strategy_bucket">
+              <option value="ai_infrastructure">AI基础设施</option>
+              <option value="ai_application">AI应用个股</option>
+              <option value="misc">杂票</option>
+              <option value="cash">现金</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Sub Bucket</label>
+            <input v-model="addForm.strategy_sub_bucket" placeholder="ETF类 / 个股类 / 自定义产业" />
+          </div>
+          <div class="form-row">
+            <label>Target Weight %</label>
+            <input v-model="addForm.target_weight_pct" type="number" step="0.1" min="0" max="100" placeholder="Optional" />
+          </div>
+        </div>
         <div class="form-row">
-          <label>Tier</label>
-          <select v-model="addForm.tier">
-            <option value="core">Core</option>
-            <option value="growth">Growth</option>
-            <option value="gamble">Gamble</option>
-          </select>
+          <label>Research Priority</label>
+          <input v-model="addForm.research_priority" type="number" min="0" max="5" />
         </div>
         <div class="form-row">
           <label>Quantity</label>
@@ -542,13 +656,38 @@ async function onBatchAnalyze() {
         </div>
 
         <div class="section-label">Settings</div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Asset Type</label>
+            <select v-model="editForm.asset_type">
+              <option value="stock">Stock</option>
+              <option value="etf">ETF</option>
+              <option value="cash">Cash</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>AI Strategy</label>
+            <select v-model="editForm.strategy_bucket">
+              <option value="ai_infrastructure">AI基础设施</option>
+              <option value="ai_application">AI应用个股</option>
+              <option value="misc">杂票</option>
+              <option value="cash">现金</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Sub Bucket</label>
+            <input v-model="editForm.strategy_sub_bucket" placeholder="ETF类 / 个股类 / 自定义产业" />
+          </div>
+          <div class="form-row">
+            <label>Target Weight %</label>
+            <input v-model="editForm.target_weight_pct" type="number" step="0.1" min="0" max="100" placeholder="Optional" />
+          </div>
+        </div>
         <div class="form-row">
-          <label>Tier</label>
-          <select v-model="editForm.tier">
-            <option value="core">Core</option>
-            <option value="growth">Growth</option>
-            <option value="gamble">Gamble</option>
-          </select>
+          <label>Research Priority</label>
+          <input v-model="editForm.research_priority" type="number" min="0" max="5" />
         </div>
         <div class="form-grid">
           <div class="form-row">
@@ -741,6 +880,21 @@ async function onBatchAnalyze() {
 
 .actions { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; }
 .name-cell { color: #bbb; font-size: 13px; white-space: nowrap; }
+.sub-bucket {
+  display: block;
+  margin-top: 3px;
+  color: #888;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.badge-ai_infrastructure { background: #0d47a1; color: #bbdefb; }
+.badge-ai_application { background: #4a148c; color: #e1bee7; }
+.badge-misc { background: #37474f; color: #cfd8dc; }
+.badge-cash { background: #1b5e20; color: #a5d6a7; }
+.risk-badge {
+  display: inline-block;
+  white-space: nowrap;
+}
 
 .ai-btn {
   background: linear-gradient(135deg, #4fc3f7, #0288d1);

@@ -1,0 +1,61 @@
+name: Deploy EAM
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: eam-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SSH_HOST: ${{ secrets.ALIYUN_HOST }}
+      SSH_USER: ${{ secrets.ALIYUN_USER }}
+      SSH_PORT: ${{ secrets.ALIYUN_PORT || '22' }}
+      SSH_PRIVATE_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+      SSH_KEY_PATH: /home/runner/.ssh/eam_aliyun
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check deployment secrets
+        id: deploy_secrets
+        run: |
+          set -euo pipefail
+          if [ -n "$SSH_HOST" ] && [ -n "$SSH_USER" ] && [ -n "$SSH_PORT" ] && [ -n "$SSH_PRIVATE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure SSH
+        if: steps.deploy_secrets.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > "$SSH_KEY_PATH"
+          chmod 600 "$SSH_KEY_PATH"
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy on server
+        if: steps.deploy_secrets.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          ssh -i "$SSH_KEY_PATH" -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /home/deploy/eam
+          bash deploy/server-deploy.sh
+          REMOTE
+
+      - name: Skip deployment when secrets are absent
+        if: steps.deploy_secrets.outputs.configured != 'true'
+        run: |
+          echo "ALIYUN_HOST, ALIYUN_USER, ALIYUN_PORT, or ALIYUN_SSH_KEY is not configured; skipping deployment."

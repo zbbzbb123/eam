@@ -21,6 +21,21 @@ class TierEnum(str, Enum):
     GAMBLE = "gamble"
 
 
+class AssetTypeEnum(str, Enum):
+    """Investable asset type."""
+    STOCK = "stock"
+    ETF = "etf"
+    CASH = "cash"
+
+
+class StrategyBucketEnum(str, Enum):
+    """AI-theme strategy allocation buckets."""
+    AI_INFRASTRUCTURE = "ai_infrastructure"
+    AI_APPLICATION = "ai_application"
+    MISC = "misc"
+    CASH = "cash"
+
+
 class HoldingStatusEnum(str, Enum):
     """Holding status enum."""
     ACTIVE = "active"
@@ -39,7 +54,12 @@ class HoldingBase(BaseModel):
     """Base schema for Holding."""
     symbol: str = Field(..., min_length=1, max_length=20)
     market: MarketEnum
-    tier: TierEnum
+    tier: TierEnum = TierEnum.GAMBLE
+    asset_type: AssetTypeEnum = AssetTypeEnum.STOCK
+    strategy_bucket: StrategyBucketEnum = StrategyBucketEnum.MISC
+    strategy_sub_bucket: Optional[str] = Field(None, max_length=100)
+    target_weight_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    research_priority: int = Field(0, ge=0, le=5)
     quantity: Decimal = Field(..., gt=0)
     avg_cost: Decimal = Field(..., gt=0)
     first_buy_date: date
@@ -58,6 +78,11 @@ class HoldingCreate(HoldingBase):
 class HoldingUpdate(BaseModel):
     """Schema for updating a holding."""
     tier: Optional[TierEnum] = None
+    asset_type: Optional[AssetTypeEnum] = None
+    strategy_bucket: Optional[StrategyBucketEnum] = None
+    strategy_sub_bucket: Optional[str] = Field(None, max_length=100)
+    target_weight_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    research_priority: Optional[int] = Field(None, ge=0, le=5)
     quantity: Optional[Decimal] = Field(None, gt=0)
     avg_cost: Optional[Decimal] = Field(None, gt=0)
     stop_loss_price: Optional[Decimal] = Field(None, gt=0)
@@ -231,6 +256,12 @@ class HoldingSummaryResponse(BaseModel):
     name: str = ""
     market: MarketEnum
     tier: TierEnum
+    asset_type: AssetTypeEnum = AssetTypeEnum.STOCK
+    strategy_bucket: StrategyBucketEnum = StrategyBucketEnum.MISC
+    strategy_sub_bucket: Optional[str] = None
+    target_weight_pct: Optional[Decimal] = None
+    portfolio_weight_pct: Decimal = Decimal("0")
+    research_priority: int = 0
     quantity: Decimal
     avg_cost: Decimal
     current_price: Decimal
@@ -375,6 +406,11 @@ class DashboardHoldingItem(BaseModel):
     symbol: str
     name: str = ""
     market: MarketEnum
+    asset_type: AssetTypeEnum = AssetTypeEnum.STOCK
+    strategy_bucket: StrategyBucketEnum = StrategyBucketEnum.MISC
+    strategy_sub_bucket: Optional[str] = None
+    target_weight_pct: Optional[Decimal] = None
+    portfolio_weight_pct: Decimal = Decimal("0")
     current_price: Decimal
     market_value: Decimal
     weight_in_tier: Decimal      # % within tier
@@ -431,3 +467,64 @@ class PredictTradeDateResponse(BaseModel):
 class BackfillTransactionRequest(BaseModel):
     """Request to backfill an initial transaction."""
     transaction_date: date   # user-confirmed date from candidates
+
+
+# ===== AI Strategy Allocation Schemas =====
+
+class StrategyTargetResponse(BaseModel):
+    """Target allocation for an AI strategy bucket."""
+    bucket: StrategyBucketEnum
+    target_pct: Decimal
+    actual_pct: Decimal = Decimal("0")
+    market_value: Decimal = Decimal("0")
+
+
+class StrategyTargetUpdateItem(BaseModel):
+    """Request item for updating a strategy bucket target."""
+    bucket: StrategyBucketEnum
+    target_pct: Decimal = Field(..., ge=0, le=100)
+
+
+class StrategyTargetUpdateRequest(BaseModel):
+    """Bulk update for strategy allocation targets."""
+    targets: List[StrategyTargetUpdateItem]
+
+
+class RebalanceBucketItem(BaseModel):
+    """Bucket-level rebalance status."""
+    bucket: StrategyBucketEnum
+    target_pct: Decimal
+    actual_pct: Decimal
+    drift_pct: Decimal
+    relative_drift_pct: Optional[Decimal] = None
+    market_value: Decimal
+    action: str
+    severity: str
+    trade_amount_cny: Decimal
+
+
+class RebalanceHoldingItem(BaseModel):
+    """Holding-level rebalance status."""
+    holding_id: int
+    symbol: str
+    market: MarketEnum
+    bucket: StrategyBucketEnum
+    target_pct: Decimal
+    actual_pct: Decimal
+    drift_pct: Decimal
+    relative_drift_pct: Optional[Decimal] = None
+    market_value: Decimal
+    action: str
+    severity: str
+    trade_amount_cny: Decimal
+
+
+class RebalancePlanResponse(BaseModel):
+    """Full AI strategy rebalance plan."""
+    total_value: Decimal
+    warning_threshold_pct: Decimal
+    critical_threshold_pct: Decimal
+    buckets: List[RebalanceBucketItem]
+    holdings: List[RebalanceHoldingItem]
+    needs_rebalance: bool
+    needs_trade: bool

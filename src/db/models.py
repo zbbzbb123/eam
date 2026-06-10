@@ -28,6 +28,21 @@ class Tier(PyEnum):
     GAMBLE = "gamble"
 
 
+class AssetType(PyEnum):
+    """Investable asset type."""
+    STOCK = "stock"
+    ETF = "etf"
+    CASH = "cash"
+
+
+class StrategyBucket(PyEnum):
+    """AI-theme strategy allocation buckets."""
+    AI_INFRASTRUCTURE = "ai_infrastructure"
+    AI_APPLICATION = "ai_application"
+    MISC = "misc"
+    CASH = "cash"
+
+
 class HoldingStatus(PyEnum):
     """Holding status enum."""
     ACTIVE = "active"
@@ -45,6 +60,15 @@ class Holding(Base):
     symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     market: Mapped[Market] = mapped_column(Enum(Market), nullable=False)
     tier: Mapped[Tier] = mapped_column(Enum(Tier), nullable=False, index=True)
+    asset_type: Mapped[AssetType] = mapped_column(
+        Enum(AssetType), default=AssetType.STOCK, nullable=False, index=True
+    )
+    strategy_bucket: Mapped[StrategyBucket] = mapped_column(
+        Enum(StrategyBucket), default=StrategyBucket.MISC, nullable=False, index=True
+    )
+    strategy_sub_bucket: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    target_weight_pct: Mapped[Optional[Decimal]] = mapped_column(DECIMAL(8, 4), nullable=True)
+    research_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     quantity: Mapped[Decimal] = mapped_column(DECIMAL(18, 4), nullable=False)
     avg_cost: Mapped[Decimal] = mapped_column(DECIMAL(18, 4), nullable=False)
@@ -69,6 +93,12 @@ class Holding(Base):
     def __init__(self, **kwargs):
         if 'status' not in kwargs:
             kwargs['status'] = HoldingStatus.ACTIVE
+        if 'asset_type' not in kwargs:
+            kwargs['asset_type'] = AssetType.STOCK
+        if 'strategy_bucket' not in kwargs:
+            kwargs['strategy_bucket'] = StrategyBucket.MISC
+        if 'research_priority' not in kwargs:
+            kwargs['research_priority'] = 0
         super().__init__(**kwargs)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -81,6 +111,26 @@ class Holding(Base):
     # Relationships
     transactions: Mapped[List["Transaction"]] = relationship(
         "Transaction", back_populates="holding", cascade="all, delete-orphan"
+    )
+
+
+class StrategyTarget(Base):
+    """User-level target allocation for each AI strategy bucket."""
+    __tablename__ = "strategy_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    bucket: Mapped[StrategyBucket] = mapped_column(Enum(StrategyBucket), nullable=False, index=True)
+    target_pct: Mapped[Decimal] = mapped_column(DECIMAL(8, 4), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "bucket", name="uq_strategy_target_user_bucket"),
+        {"mysql_charset": "utf8mb4"},
     )
 
 

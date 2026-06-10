@@ -3,22 +3,25 @@ import logging
 import time
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from src.db.database import get_db
-from src.db.models import Holding, Tier, HoldingStatus, DailyQuote, Market
+from src.db.models import Holding, Tier, HoldingStatus, DailyQuote, Market, StrategyBucket, StrategyTarget
 from src.db.models_market_data import MarketIndicatorSnapshot
 from src.db.models_auth import User
 from src.services.auth import get_current_user
+from src.services.cgg_classifier import derive_cgg_tier
 from src.api.schemas import (
     PortfolioOverview, TierAllocation, TierEnum,
     PortfolioSummaryResponse, TierSummaryResponse,
     HoldingSummaryResponse,
     DashboardResponse, DashboardTier, DashboardHoldingItem,
+    StrategyBucketEnum, StrategyTargetResponse, StrategyTargetUpdateRequest,
+    RebalancePlanResponse, RebalanceBucketItem, RebalanceHoldingItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,6 +78,246 @@ TARGET_ALLOCATIONS = {
     Tier.GAMBLE: Decimal("30"),
 }
 
+DEFAULT_STRATEGY_TARGETS = {
+    StrategyBucket.AI_INFRASTRUCTURE: Decimal("50"),
+    StrategyBucket.AI_APPLICATION: Decimal("25"),
+    StrategyBucket.MISC: Decimal("10"),
+    StrategyBucket.CASH: Decimal("15"),
+}
+
+STRATEGY_BUCKET_ORDER = [
+    StrategyBucket.AI_INFRASTRUCTURE,
+    StrategyBucket.AI_APPLICATION,
+    StrategyBucket.MISC,
+    StrategyBucket.CASH,
+]
+
+WARNING_RELATIVE_DRIFT = Decimal("20")
+CRITICAL_RELATIVE_DRIFT = Decimal("50")
+
+
+def _bucket_to_api(bucket: StrategyBucket) -> StrategyBucketEnum:
+    return StrategyBucketEnum(bucket.value)
+
+
+def _get_strategy_targets(db: Session, user_id: int) -> Dict[StrategyBucket, Decimal]:
+    """Return user strategy targets, filling missing buckets with defaults."""
+    targets = DEFAULT_STRATEGY_TARGETS.copy()
+    rows = (
+        db.query(StrategyTarget)
+        .filter(StrategyTarget.user_id == user_id)
+        .all()
+    )
+    for row in rows:
+        targets[row.bucket] = Decimal(str(row.target_pct))
+    return targets
+
+
+def _round_pct(value: Decimal) -> Decimal:
+    return round(value, 2)
+
+
+def _severity_for_target(actual_pct: Decimal, target_pct: Decimal) -> tuple[str, Optional[Decimal]]:
+    """Return severity and relative drift percent for target allocation."""
+    if target_pct == 0:
+        if actual_pct == 0:
+            return "ok", None
+        return "critical", None
+
+    relative = ((actual_pct - target_pct) / target_pct) * 100
+    abs_relative = abs(relative)
+    if abs_relative >= CRITICAL_RELATIVE_DRIFT:
+        return "critical", relative
+    if abs_relative >= WARNING_RELATIVE_DRIFT:
+        return "warning", relative
+    return "ok", relative
+
+
+def _action_for_drift(drift_pct: Decimal, severity: str) -> str:
+    if severity == "ok":
+        return "hold"
+    if drift_pct > 0:
+        return "reduce"
+    if drift_pct < 0:
+        return "increase"
+    return "hold"
+
+
+def _auto_cgg_tier(holding: Holding) -> Tier:
+    return derive_cgg_tier(
+        holding.symbol,
+        holding.market,
+        holding.asset_type,
+        holding.strategy_sub_bucket,
+    )
+
+
+def _active_holdings(db: Session, user_id: int) -> list[Holding]:
+    return db.execute(
+        select(Holding).where(
+            Holding.status == HoldingStatus.ACTIVE,
+            Holding.user_id == user_id,
+        )
+    ).scalars().all()
+
+
+def _holding_market_values(db: Session, holdings: list[Holding]) -> Dict[int, Decimal]:
+    usd_rate = _get_usd_cny_rate(db)
+    values = {}
+    for holding in holdings:
+        price = _get_current_price(holding, db)
+        values[holding.id] = _to_cny(holding.quantity * price, holding.market, usd_rate)
+    return values
+
+
+@router.get("/strategy-targets", response_model=List[StrategyTargetResponse])
+def get_strategy_targets(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get AI strategy bucket targets with current actual allocations."""
+    holdings = _active_holdings(db, current_user.id)
+    holding_values = _holding_market_values(db, holdings)
+    total_value = sum(holding_values.values())
+    targets = _get_strategy_targets(db, current_user.id)
+
+    responses = []
+    for bucket in STRATEGY_BUCKET_ORDER:
+        bucket_value = sum(
+            holding_values.get(h.id, Decimal("0"))
+            for h in holdings
+            if h.strategy_bucket == bucket
+        )
+        actual_pct = (bucket_value / total_value * 100) if total_value else Decimal("0")
+        responses.append(StrategyTargetResponse(
+            bucket=_bucket_to_api(bucket),
+            target_pct=_round_pct(targets[bucket]),
+            actual_pct=_round_pct(actual_pct),
+            market_value=round(bucket_value, 2),
+        ))
+    return responses
+
+
+@router.put("/strategy-targets", response_model=List[StrategyTargetResponse])
+def update_strategy_targets(
+    payload: StrategyTargetUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Update AI strategy bucket targets. Targets must sum to 100%."""
+    incoming = {StrategyBucket[item.bucket.value.upper()]: item.target_pct for item in payload.targets}
+    if set(incoming.keys()) != set(STRATEGY_BUCKET_ORDER):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Targets must include ai_infrastructure, ai_application, misc, and cash",
+        )
+
+    total = sum(Decimal(str(v)) for v in incoming.values())
+    if abs(total - Decimal("100")) > Decimal("0.01"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Strategy targets must sum to 100%, got {total}",
+        )
+
+    existing = {
+        row.bucket: row
+        for row in db.query(StrategyTarget)
+        .filter(StrategyTarget.user_id == current_user.id)
+        .all()
+    }
+    for bucket, target_pct in incoming.items():
+        if bucket in existing:
+            existing[bucket].target_pct = target_pct
+        else:
+            db.add(StrategyTarget(
+                user_id=current_user.id,
+                bucket=bucket,
+                target_pct=target_pct,
+            ))
+
+    db.commit()
+    return get_strategy_targets(db=db, current_user=current_user)
+
+
+@router.get("/rebalance-plan", response_model=RebalancePlanResponse)
+def get_rebalance_plan(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get bucket and holding-level rebalance plan for the AI strategy portfolio."""
+    holdings = _active_holdings(db, current_user.id)
+    holding_values = _holding_market_values(db, holdings)
+    total_value = sum(holding_values.values())
+    targets = _get_strategy_targets(db, current_user.id)
+
+    bucket_items = []
+    for bucket in STRATEGY_BUCKET_ORDER:
+        bucket_value = sum(
+            holding_values.get(h.id, Decimal("0"))
+            for h in holdings
+            if h.strategy_bucket == bucket
+        )
+        actual_pct = (bucket_value / total_value * 100) if total_value else Decimal("0")
+        target_pct = targets[bucket]
+        drift_pct = actual_pct - target_pct
+        severity, relative_drift_pct = _severity_for_target(actual_pct, target_pct)
+        action = _action_for_drift(drift_pct, severity)
+        trade_amount = abs(drift_pct) / 100 * total_value if total_value else Decimal("0")
+
+        bucket_items.append(RebalanceBucketItem(
+            bucket=_bucket_to_api(bucket),
+            target_pct=_round_pct(target_pct),
+            actual_pct=_round_pct(actual_pct),
+            drift_pct=_round_pct(drift_pct),
+            relative_drift_pct=_round_pct(relative_drift_pct) if relative_drift_pct is not None else None,
+            market_value=round(bucket_value, 2),
+            action=action,
+            severity=severity,
+            trade_amount_cny=round(trade_amount, 2),
+        ))
+
+    holding_items = []
+    for holding in holdings:
+        if holding.target_weight_pct is None:
+            continue
+        target_pct = Decimal(str(holding.target_weight_pct))
+        actual_pct = (
+            holding_values.get(holding.id, Decimal("0")) / total_value * 100
+            if total_value else Decimal("0")
+        )
+        drift_pct = actual_pct - target_pct
+        severity, relative_drift_pct = _severity_for_target(actual_pct, target_pct)
+        action = _action_for_drift(drift_pct, severity)
+        trade_amount = abs(drift_pct) / 100 * total_value if total_value else Decimal("0")
+
+        holding_items.append(RebalanceHoldingItem(
+            holding_id=holding.id,
+            symbol=holding.symbol,
+            market=holding.market.value,
+            bucket=holding.strategy_bucket.value,
+            target_pct=_round_pct(target_pct),
+            actual_pct=_round_pct(actual_pct),
+            drift_pct=_round_pct(drift_pct),
+            relative_drift_pct=_round_pct(relative_drift_pct) if relative_drift_pct is not None else None,
+            market_value=round(holding_values.get(holding.id, Decimal("0")), 2),
+            action=action,
+            severity=severity,
+            trade_amount_cny=round(trade_amount, 2),
+        ))
+
+    needs_rebalance = any(item.severity in ("warning", "critical") for item in bucket_items + holding_items)
+    needs_trade = any(item.severity == "critical" for item in bucket_items + holding_items)
+
+    return RebalancePlanResponse(
+        total_value=round(total_value, 2),
+        warning_threshold_pct=WARNING_RELATIVE_DRIFT,
+        critical_threshold_pct=CRITICAL_RELATIVE_DRIFT,
+        buckets=bucket_items,
+        holdings=holding_items,
+        needs_rebalance=needs_rebalance,
+        needs_trade=needs_trade,
+    )
+
 
 @router.get("/overview", response_model=PortfolioOverview)
 def get_portfolio_overview(
@@ -129,7 +372,7 @@ def get_portfolio_overview(
     for holding in holdings:
         # For MVP, use avg_cost as price estimate
         market_value = _to_cny(holding.quantity * holding.avg_cost, holding.market, usd_rate)
-        tier_values[holding.tier] += market_value
+        tier_values[_auto_cgg_tier(holding)] += market_value
 
     total_value = sum(tier_values.values())
 
@@ -247,7 +490,7 @@ def get_portfolio_summary(
 
     tiers = []
     for tier in [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]:
-        tier_holdings = [h for h in holdings if h.tier == tier]
+        tier_holdings = [h for h in holdings if _auto_cgg_tier(h) == tier]
         tier_value = sum(holding_values.get(h.id, Decimal("0")) for h in tier_holdings)
         target = TARGET_ALLOCATIONS[tier]
         actual = (tier_value / total_value * 100) if total_value else Decimal("0")
@@ -312,27 +555,39 @@ def get_holdings_summary(
             Holding.status == HoldingStatus.ACTIVE,
             Holding.user_id == current_user.id,
         )
-        .order_by(Holding.tier, Holding.symbol)
+        .order_by(Holding.strategy_bucket, Holding.symbol)
     ).scalars().all()
 
     # Batch fetch names
     names = _get_stock_names(holdings)
 
     usd_rate = _get_usd_cny_rate(db)
-    result = []
+    value_rows = []
     for h in holdings:
         current_price = _get_current_price(h, db)
         market_value = _to_cny(h.quantity * current_price, h.market, usd_rate)
         cost_basis = _to_cny(h.quantity * h.avg_cost, h.market, usd_rate)
+        value_rows.append((h, current_price, market_value, cost_basis))
+
+    total_value = sum(row[2] for row in value_rows)
+    result = []
+    for h, current_price, market_value, cost_basis in value_rows:
         pnl = market_value - cost_basis
         pnl_pct = (pnl / cost_basis * 100) if cost_basis else Decimal("0")
+        portfolio_weight_pct = (market_value / total_value * 100) if total_value else Decimal("0")
 
         result.append(HoldingSummaryResponse(
             id=h.id,
             symbol=h.symbol,
             name=names.get(h.symbol, ""),
             market=h.market.value,
-            tier=h.tier.value,
+            tier=_auto_cgg_tier(h).value,
+            asset_type=h.asset_type.value,
+            strategy_bucket=h.strategy_bucket.value,
+            strategy_sub_bucket=h.strategy_sub_bucket,
+            target_weight_pct=h.target_weight_pct,
+            portfolio_weight_pct=round(portfolio_weight_pct, 2),
+            research_priority=h.research_priority,
             quantity=h.quantity,
             avg_cost=h.avg_cost,
             current_price=current_price,
@@ -486,23 +741,37 @@ def _get_ref_price(holding: Holding, db: Session, days: int) -> Decimal:
 
 @router.get("/dashboard", response_model=DashboardResponse)
 def get_dashboard(
+    group_by: str = "strategy",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Get full dashboard data: tiers with holdings and 7d/30d P&L."""
+    """Get full dashboard data grouped by AI strategy or CGG risk lens."""
+    if group_by not in ("strategy", "cgg"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by must be strategy or cgg",
+        )
+
+    group_order = STRATEGY_BUCKET_ORDER if group_by == "strategy" else [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]
+    group_key = (
+        (lambda holding: holding.strategy_bucket)
+        if group_by == "strategy"
+        else _auto_cgg_tier
+    )
+
     holdings = db.execute(
         select(Holding).where(
             Holding.status == HoldingStatus.ACTIVE,
             Holding.user_id == current_user.id,
         )
-        .order_by(Holding.tier, Holding.symbol)
+        .order_by(Holding.strategy_bucket if group_by == "strategy" else Holding.tier, Holding.symbol)
     ).scalars().all()
 
     if not holdings:
         empty_tiers = []
-        for tier_val in ["core", "growth", "gamble"]:
+        for group in group_order:
             empty_tiers.append(DashboardTier(
-                tier=tier_val, market_value=Decimal("0"), weight_pct=Decimal("0"),
+                tier=group.value, market_value=Decimal("0"), weight_pct=Decimal("0"),
                 pnl_7d=Decimal("0"), pnl_7d_pct=Decimal("0"),
                 pnl_30d=Decimal("0"), pnl_30d_pct=Decimal("0"),
                 holdings=[],
@@ -546,16 +815,15 @@ def get_dashboard(
 
     total_value = sum(d["market_value"] for d in holding_data)
 
-    # Group by tier
-    tier_order = [Tier.CORE, Tier.GROWTH, Tier.GAMBLE]
+    # Group by AI strategy bucket by default; optionally by CGG risk lens.
     tiers = []
     total_pnl_7d = Decimal("0")
     total_ref_7d = Decimal("0")
     total_pnl_30d = Decimal("0")
     total_ref_30d = Decimal("0")
 
-    for tier in tier_order:
-        tier_holdings = [d for d in holding_data if d["holding"].tier == tier]
+    for group in group_order:
+        tier_holdings = [d for d in holding_data if group_key(d["holding"]) == group]
         tier_mv = sum(d["market_value"] for d in tier_holdings)
         tier_pnl_7d = sum(d["pnl_7d"] for d in tier_holdings)
         tier_ref_7d = sum(d["ref_7d_value"] for d in tier_holdings)
@@ -575,6 +843,11 @@ def get_dashboard(
                 symbol=h.symbol,
                 name=names.get(h.symbol, ""),
                 market=h.market.value,
+                asset_type=h.asset_type.value,
+                strategy_bucket=h.strategy_bucket.value,
+                strategy_sub_bucket=h.strategy_sub_bucket,
+                target_weight_pct=h.target_weight_pct,
+                portfolio_weight_pct=round(d["market_value"] / total_value * 100, 2) if total_value else Decimal("0"),
                 current_price=round(d["current_price"], 4),
                 market_value=round(d["market_value"], 2),
                 weight_in_tier=round(d["market_value"] / tier_mv * 100, 2) if tier_mv else Decimal("0"),
@@ -585,7 +858,7 @@ def get_dashboard(
             ))
 
         tiers.append(DashboardTier(
-            tier=tier.value,
+            tier=group.value,
             market_value=round(tier_mv, 2),
             weight_pct=round(tier_mv / total_value * 100, 2) if total_value else Decimal("0"),
             pnl_7d=round(tier_pnl_7d, 2),

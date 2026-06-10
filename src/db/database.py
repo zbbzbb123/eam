@@ -28,7 +28,13 @@ def get_db():
         db.close()
 
 
-def _add_column_if_not_exists(engine, table: str, column: str, column_def: str):
+def _add_column_if_not_exists(
+    engine,
+    table: str,
+    column: str,
+    column_def: str,
+    create_index: bool = True,
+):
     """Add a column to a table if it doesn't already exist."""
     insp = inspect(engine)
     try:
@@ -38,7 +44,8 @@ def _add_column_if_not_exists(engine, table: str, column: str, column_def: str):
     if column not in columns:
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {column_def}"))
-            conn.execute(text(f"CREATE INDEX `ix_{table}_{column}` ON `{table}`(`{column}`)"))
+            if create_index:
+                conn.execute(text(f"CREATE INDEX `ix_{table}_{column}` ON `{table}`(`{column}`)"))
         logger.info(f"Added column {column} to {table}")
 
 
@@ -96,6 +103,51 @@ def _migrate_tier_rename():
         logger.info("Updated tier enum column definition")
 
 
+def _migrate_strategy_columns():
+    """Add AI strategy allocation fields to holdings."""
+    _add_column_if_not_exists(
+        engine,
+        "holdings",
+        "asset_type",
+        "ENUM('STOCK','ETF','CASH') NOT NULL DEFAULT 'STOCK'",
+    )
+    _add_column_if_not_exists(
+        engine,
+        "holdings",
+        "strategy_bucket",
+        "ENUM('AI_INFRASTRUCTURE','AI_APPLICATION','MISC','CASH') NOT NULL DEFAULT 'MISC'",
+    )
+    _add_column_if_not_exists(
+        engine,
+        "holdings",
+        "strategy_sub_bucket",
+        "VARCHAR(100) NULL",
+    )
+    _add_column_if_not_exists(
+        engine,
+        "holdings",
+        "target_weight_pct",
+        "DECIMAL(8,4) NULL",
+        create_index=False,
+    )
+    _add_column_if_not_exists(
+        engine,
+        "holdings",
+        "research_priority",
+        "INT NOT NULL DEFAULT 0",
+        create_index=False,
+    )
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(
+                "UPDATE holdings SET asset_type='CASH', strategy_bucket='CASH' "
+                "WHERE UPPER(symbol) IN ('CASH', 'CNY', 'USD', 'HKD')"
+            ))
+    except Exception as e:
+        logger.debug("Could not normalize cash holdings: %s", e)
+
+
 def init_db():
     """Create all tables and run migrations."""
     # Import all model modules so they register with Base.metadata
@@ -109,3 +161,4 @@ def init_db():
     # Run migrations for existing tables
     _migrate_user_columns()
     _migrate_tier_rename()
+    _migrate_strategy_columns()

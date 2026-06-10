@@ -10,16 +10,20 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func
 
 from src.db.database import get_db, SessionLocal
-from src.db.models import Holding, Transaction, Market, Tier, HoldingStatus, TransactionAction, DailyQuote
+from src.db.models import (
+    Holding, Transaction, Market, Tier, HoldingStatus, TransactionAction,
+    DailyQuote, AssetType, StrategyBucket, Signal,
+)
 from src.db.models_auth import User
 from src.services.auth import get_current_user
+from src.services.cgg_classifier import derive_cgg_tier
 
 from src.api.schemas import (
     HoldingCreate, HoldingUpdate, HoldingResponse,
     TransactionCreate, TransactionResponse,
     TransactionPreviewRequest, TransactionPreviewResponse,
     PositionUpdateRequest,
-    TierEnum, MarketEnum, HoldingStatusEnum,
+    TierEnum, MarketEnum, HoldingStatusEnum, AssetTypeEnum, StrategyBucketEnum,
     TradeDateCandidate, PredictTradeDateResponse, BackfillTransactionRequest,
 )
 
@@ -36,6 +40,16 @@ def _map_market(market: MarketEnum) -> Market:
 def _map_tier(tier: TierEnum) -> Tier:
     """Map API enum to DB enum."""
     return Tier[tier.value.upper()]
+
+
+def _map_asset_type(asset_type: AssetTypeEnum) -> AssetType:
+    """Map API enum to DB enum."""
+    return AssetType[asset_type.value.upper()]
+
+
+def _map_strategy_bucket(bucket: StrategyBucketEnum) -> StrategyBucket:
+    """Map API enum to DB enum."""
+    return StrategyBucket[bucket.value.upper()]
 
 
 def _fetch_initial_quotes(symbol: str, market: Market, days: int = 90):
@@ -202,10 +216,17 @@ def create_holding(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new holding."""
+    market = _map_market(holding.market)
+    asset_type = _map_asset_type(holding.asset_type)
     db_holding = Holding(
         symbol=holding.symbol.upper(),
-        market=_map_market(holding.market),
-        tier=_map_tier(holding.tier),
+        market=market,
+        tier=derive_cgg_tier(holding.symbol, market, asset_type, holding.strategy_sub_bucket),
+        asset_type=asset_type,
+        strategy_bucket=_map_strategy_bucket(holding.strategy_bucket),
+        strategy_sub_bucket=holding.strategy_sub_bucket,
+        target_weight_pct=holding.target_weight_pct,
+        research_priority=holding.research_priority,
         quantity=holding.quantity,
         avg_cost=holding.avg_cost,
         first_buy_date=holding.first_buy_date,
@@ -247,6 +268,7 @@ def create_holding(
 @router.get("", response_model=List[HoldingResponse])
 def list_holdings(
     tier: Optional[TierEnum] = None,
+    strategy_bucket: Optional[StrategyBucketEnum] = None,
     status: Optional[HoldingStatusEnum] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -256,10 +278,12 @@ def list_holdings(
 
     if tier:
         query = query.where(Holding.tier == _map_tier(tier))
+    if strategy_bucket:
+        query = query.where(Holding.strategy_bucket == _map_strategy_bucket(strategy_bucket))
     if status:
         query = query.where(Holding.status == HoldingStatus[status.value.upper()])
 
-    query = query.order_by(Holding.tier, Holding.symbol)
+    query = query.order_by(Holding.strategy_bucket, Holding.symbol)
 
     result = db.execute(query)
     return result.scalars().all()
@@ -297,17 +321,27 @@ def update_holding(
         )
 
     update_data = update.model_dump(exclude_unset=True)
+    update_data.pop("tier", None)
 
     # Map status enum if present
     if "status" in update_data and update_data["status"]:
         update_data["status"] = HoldingStatus[update_data["status"].value.upper()]
 
-    # Map tier enum if present
-    if "tier" in update_data and update_data["tier"]:
-        update_data["tier"] = Tier[update_data["tier"].value.upper()]
+    if "asset_type" in update_data and update_data["asset_type"]:
+        update_data["asset_type"] = AssetType[update_data["asset_type"].value.upper()]
+
+    if "strategy_bucket" in update_data and update_data["strategy_bucket"]:
+        update_data["strategy_bucket"] = StrategyBucket[update_data["strategy_bucket"].value.upper()]
 
     for field, value in update_data.items():
         setattr(holding, field, value)
+
+    holding.tier = derive_cgg_tier(
+        holding.symbol,
+        holding.market,
+        holding.asset_type,
+        holding.strategy_sub_bucket,
+    )
 
     db.commit()
     db.refresh(holding)
@@ -328,6 +362,10 @@ def delete_holding(
             detail=f"Holding {holding_id} not found"
         )
 
+    db.query(Signal).filter(Signal.holding_id == holding.id).update(
+        {Signal.holding_id: None},
+        synchronize_session=False,
+    )
     db.delete(holding)
     db.commit()
 

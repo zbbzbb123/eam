@@ -13,14 +13,12 @@ TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 logger = logging.getLogger(__name__)
 
-# Default schedule: when each task should run daily
+# Default schedule: market data sync and weekly report jobs.
 DEFAULT_SCHEDULE = {
     "collect_market_data":      {"hour": 17, "minute": 0},     # A-share close data
     "collect_macro_data":       {"hour": 17, "minute": 10},    # Macro data
     "run_analyzers":            {"hour": 17, "minute": 20},    # Run signal analyzers
-    "generate_daily_report_pm": {"hour": 17, "minute": 30},    # Daily report #1 (A-share)
     "collect_market_data_am":   {"hour": 6, "minute": 30},     # US overnight data
-    "generate_daily_report_am": {"hour": 7, "minute": 0},      # Daily report #2 (US market)
 }
 
 # Weekly schedule
@@ -483,9 +481,7 @@ _DEFAULT_FUNCS = {
     "collect_market_data": _collect_market_data,
     "collect_macro_data": _collect_macro_data,
     "run_analyzers": _run_analyzers,
-    "generate_daily_report_pm": _generate_daily_report_new,
     "collect_market_data_am": _collect_market_data_am,
-    "generate_daily_report_am": _generate_daily_report_new,
 }
 
 _WEEKLY_FUNCS = {

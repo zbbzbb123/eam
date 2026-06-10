@@ -73,8 +73,26 @@ export function getHoldingsSummary() {
   return safe(api.get('/portfolio/holdings-summary'), [])
 }
 
-export function getDashboard() {
-  return safe(api.get('/portfolio/dashboard'), { total_value: 0, tiers: [] })
+export function getDashboard(params = {}) {
+  return safe(api.get('/portfolio/dashboard', { params }), { total_value: 0, tiers: [] })
+}
+
+export function getStrategyTargets() {
+  return safe(api.get('/portfolio/strategy-targets'), [])
+}
+
+export function updateStrategyTargets(targets) {
+  return api.put('/portfolio/strategy-targets', { targets }).then(r => r.data)
+}
+
+export function getRebalancePlan() {
+  return safe(api.get('/portfolio/rebalance-plan'), {
+    total_value: 0,
+    buckets: [],
+    holdings: [],
+    needs_rebalance: false,
+    needs_trade: false,
+  })
 }
 
 export function getHoldings(params = {}) {
